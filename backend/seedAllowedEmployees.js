@@ -84,3 +84,17 @@ export async function validateAllowedEmployee(empId, empName) {
 
   return row;
 }
+
+export async function lookupAllowedEmployee(empId) {
+  const normalizedId = normalizeEmpId(empId);
+  if (!normalizedId) return null;
+
+  const result = await query(
+    `SELECT emp_id, emp_name, emp_status
+     FROM gamethon_allowed_employees
+     WHERE UPPER(emp_id) = $1`,
+    [normalizedId]
+  );
+
+  return result.rows[0] || null;
+}

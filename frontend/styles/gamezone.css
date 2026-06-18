@@ -441,6 +441,17 @@ h1 {
   transition: border-color 0.2s, box-shadow 0.2s;
 }
 .form-group input::placeholder { color: var(--text-dim); }
+.form-group input[readonly] {
+  background: var(--bolly-blush);
+  cursor: default;
+}
+.login-hint {
+  font-size: 12px;
+  margin: -4px 0 12px;
+  color: var(--text-muted);
+}
+.login-hint.ok { color: var(--success); }
+.login-hint.error { color: var(--danger); }
 
 .btn-secondary {
   background: #fff;
@@ -1166,8 +1177,9 @@ h1 {
   width: 100%;
   max-width: 480px;
   align-self: center;
-  aspect-ratio: 5 / 3;
-  min-height: 200px;
+  aspect-ratio: 3 / 1;
+  min-height: 96px;
+  max-height: 130px;
   border-radius: 12px;
   overflow: hidden;
   border: 1px solid var(--border);
@@ -1182,19 +1194,11 @@ h1 {
   display: block;
 }
 .eye-photo-frame.eyes-only {
-  min-height: 220px;
-}
-.eye-photo-frame img.eye-crop-hema {
-  object-fit: cover;
-  object-position: 50% 28%;
-}
-.eye-photo-frame img.eye-crop-rajesh {
-  object-fit: cover;
-  object-position: 50% 36%;
+  min-height: 110px;
 }
 .eye-photo-frame img.eye-crop {
   object-fit: cover;
-  object-position: 50% 32%;
+  object-position: center center;
 }
 .eye-hint {
   font-size: 11px;

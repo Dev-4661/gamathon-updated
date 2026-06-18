@@ -106,6 +106,10 @@
     return data.player;
   }
 
+  async function lookupEmployee(empId) {
+    return apiRequest(`/players/lookup/${encodeURIComponent(empId.trim())}`);
+  }
+
   async function savePlayer(p) {
     try {
       const data = await apiRequest(`/players/${encodeURIComponent(p.empId)}/${p.sessionId}`, {
@@ -329,6 +333,26 @@
     { word: 'War (2019)', meaning: '"Jab tak todenge nahi… tab tak chhodenge nahi"' }
   ];
 
+  function shuffleArray(items) {
+    const arr = [...items];
+    for (let i = arr.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [arr[i], arr[j]] = [arr[j], arr[i]];
+    }
+    return arr;
+  }
+
+  function initMatchShuffle() {
+    let words;
+    let meanings;
+    do {
+      words = shuffleArray(MATCH_PAIRS.map((p, i) => ({ text: p.word, id: i })));
+      meanings = shuffleArray(MATCH_PAIRS.map((p, i) => ({ text: p.meaning, id: i })));
+    } while (words.some((w, i) => w.id === meanings[i].id));
+    gameState.match.words = words;
+    gameState.match.meanings = meanings;
+  }
+
   // ======== GAME 4: GUESS THE ACTRESS ========
   const GUESS_ROUNDS = [
     {
@@ -494,16 +518,17 @@
         <div class="login-form-panel">
           <div class="login-form-inner">
             <h3>Player Login</h3>
-            <p class="form-lead">Enter your employee ID and display name</p>
+            <p class="form-lead">Enter your Employee ID — your name loads automatically</p>
             <div class="event-gate ${locked ? 'locked' : 'live'}" id="eventGate">${eventGateMessage()}</div>
             <div class="form-group">
               <label for="empId">Employee ID</label>
-              <input type="text" id="empId" placeholder="e.g. IIHL10230" autocomplete="off" ${locked ? 'disabled' : ''} />
+              <input type="text" id="empId" placeholder="e.g. IIHL10230" autocomplete="username" ${locked ? 'disabled' : ''} />
             </div>
             <div class="form-group">
-              <label for="empName">Display Name</label>
-              <input type="text" id="empName" placeholder="Full name as per HR records" autocomplete="off" ${locked ? 'disabled' : ''} />
+              <label for="empName">Employee Name</label>
+              <input type="text" id="empName" placeholder="Auto-filled after ID lookup" readonly tabindex="-1" />
             </div>
+            <div id="loginHint" class="login-hint" style="display:none;"></div>
             <div id="loginError" class="error-msg" style="display:none;"></div>
             <button class="btn-primary" id="loginBtn" ${locked ? 'disabled' : ''}>${locked ? (eventStatus?.phase === 'after' ? 'Gamethon Closed' : 'Opens Soon') : 'Enter Arena →'}</button>
           </div>
@@ -520,12 +545,68 @@
     const idInput = document.getElementById('empId');
     const nameInput = document.getElementById('empName');
     const err = document.getElementById('loginError');
+    const hint = document.getElementById('loginHint');
+    let lookupTimer = null;
+    let lookupRequest = 0;
+
+    function showHint(text, type) {
+      if (!text) {
+        hint.style.display = 'none';
+        hint.textContent = '';
+        return;
+      }
+      hint.textContent = text;
+      hint.className = 'login-hint ' + (type || '');
+      hint.style.display = 'block';
+    }
+
+    async function fetchEmployeeName() {
+      const empId = idInput.value.trim();
+      if (!empId) {
+        nameInput.value = '';
+        nameInput.placeholder = 'Auto-filled after ID lookup';
+        showHint('');
+        return;
+      }
+
+      const requestId = ++lookupRequest;
+      nameInput.value = '';
+      nameInput.placeholder = 'Looking up...';
+      showHint('Checking Employee ID...', 'loading');
+
+      try {
+        const data = await lookupEmployee(empId);
+        if (requestId !== lookupRequest) return;
+        nameInput.value = data.empName;
+        nameInput.placeholder = 'Auto-filled from HR records';
+        showHint('Name loaded. Click Enter Arena to continue.', 'ok');
+        err.style.display = 'none';
+      } catch (e) {
+        if (requestId !== lookupRequest) return;
+        nameInput.value = '';
+        nameInput.placeholder = 'ID not found';
+        showHint(e.message || 'Could not find this Employee ID.', 'error');
+      }
+    }
+
+    idInput.addEventListener('input', () => {
+      clearTimeout(lookupTimer);
+      lookupTimer = setTimeout(fetchEmployeeName, 450);
+    });
+    idInput.addEventListener('blur', fetchEmployeeName);
+
     function submit() {
       const empId = idInput.value.trim();
       const empName = nameInput.value.trim();
-      if (!empId || !empName) {
-        err.textContent = 'Please fill in both Employee ID and Name.';
+      if (!empId) {
+        err.textContent = 'Please enter your Employee ID.';
         err.style.display = 'block';
+        return;
+      }
+      if (!empName) {
+        err.textContent = 'Wait for your name to load, or check that your Employee ID is registered.';
+        err.style.display = 'block';
+        fetchEmployeeName();
         return;
       }
       const btn = document.getElementById('loginBtn');
@@ -547,9 +628,9 @@
       });
     }
     document.getElementById('loginBtn').addEventListener('click', submit);
-    [idInput, nameInput].forEach(inp => inp.addEventListener('keypress', e => {
+    idInput.addEventListener('keypress', e => {
       if (e.key === 'Enter') submit();
-    }));
+    });
   }
 
   // ======== START SCREEN ========
@@ -658,9 +739,7 @@
 
     initScoring();
 
-    // init match arrays
-    gameState.match.words = [...MATCH_PAIRS.map((p, i) => ({ text: p.word, id: i }))].sort(() => Math.random() - 0.5);
-    gameState.match.meanings = [...MATCH_PAIRS.map((p, i) => ({ text: p.meaning, id: i }))].sort(() => Math.random() - 0.5);
+    initMatchShuffle();
     
     gameState.timerInterval = setInterval(tickTimer, 1000);
     renderCurrentGame();
@@ -761,6 +840,13 @@
     if (gameState.currentGame >= 5) {
       endGame('Completed');
       return;
+    }
+    if (games[gameState.currentGame] === 'match') {
+      gameState.match.matched = [];
+      gameState.match.selWord = null;
+      gameState.match.selMean = null;
+      gameState.match.wrong = null;
+      initMatchShuffle();
     }
     renderCurrentGame();
   }
@@ -1063,18 +1149,16 @@
 
   const EYE_ROUNDS = [
     {
-      img: '/images/hema_malini_eyes.png',
+      img: '/images/hema_malini_eyes_crop.png',
       answer: 'Hema Malini',
       title: 'Gaze Alpha',
       hint: 'The Dream Girl of Bollywood — dancer, MP, and star of Sholay and Seeta Aur Geeta!',
-      cropClass: 'eye-crop-hema',
     },
     {
-      img: '/images/rajesh_khanna_eyes_1781676287894.jpg',
+      img: '/images/rajesh_khanna_eyes_crop.png',
       answer: 'Rajesh Khanna',
       title: 'Gaze Beta',
       hint: 'India\'s historic first superstar, legendary voice of "Anand" and romantic head tilt!',
-      cropClass: 'eye-crop-rajesh',
     },
   ];
 
@@ -1107,7 +1191,7 @@
               ${badgeHtml}
               <div class="eye-card-title">${round.title}</div>
               <div class="eye-photo-frame eyes-only">
-                <img src="${round.img}" class="${round.cropClass || 'eye-crop'}" alt="Superstar gaze" referrerPolicy="no-referrer">
+                <img src="${round.img}" class="eye-crop" alt="Superstar eyes" referrerPolicy="no-referrer">
               </div>
               <div class="eye-hint">${round.hint}</div>
               <div class="eye-select-wrap">
@@ -1344,7 +1428,7 @@
         <div id="adminContent"><div class="empty-state">Loading records...</div></div>
         <div class="admin-toolbar">
           <button class="btn-secondary" id="exitAdmin">← Back</button>
-          <button class="btn-warn" id="clearData">Clear All Data</button>
+          <button class="btn-warn" id="clearData">Clear History</button>
         </div>
       </div>
     `;
@@ -1355,7 +1439,7 @@
       if (currentPlayer) renderStart(); else renderLogin();
     });
     document.getElementById('clearData').addEventListener('click', () => {
-      if (confirm('Delete ALL game records from the database? This cannot be undone.')) {
+      if (confirm('Delete all game history from the database? This cannot be undone.')) {
         clearAllPlayers().then(() => renderAdmin()).catch(err => alert(err.message));
       }
     });
@@ -1474,7 +1558,7 @@
         <h2>🔐 Admin Access</h2>
         <p>Enter admin password to open the Control Center.</p>
         <input type="password" id="adminPwdInput" placeholder="Password" autofocus />
-        <div class="modal-err" id="adminErr">Incorrect password. Try "admin" or "admin123".</div>
+        <div class="modal-err" id="adminErr">Incorrect Password.</div>
         <div class="modal-actions">
           <button class="btn-secondary" id="adminCancel">Cancel</button>
           <button class="btn-primary" style="width:auto;margin-top:0;" id="adminSubmit">Login</button>

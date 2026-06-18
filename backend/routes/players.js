@@ -5,7 +5,7 @@ import {
   getEventStatus,
   sessionExpiresAtForLogin,
 } from '../eventWindow.js';
-import { normalizeEmpId, validateAllowedEmployee } from '../seedAllowedEmployees.js';
+import { normalizeEmpId, validateAllowedEmployee, lookupAllowedEmployee } from '../seedAllowedEmployees.js';
 
 const router = Router();
 
@@ -118,6 +118,31 @@ router.post('/login', async (req, res) => {
       [canonicalEmpId, canonicalEmpName, sessionId, JSON.stringify(breakdown), sessionExpiresAt]
     );
     res.status(201).json({ player: rowToPlayer(result.rows[0]), event: eventStatus });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.get('/lookup/:empId', async (req, res) => {
+  try {
+    const row = await lookupAllowedEmployee(req.params.empId);
+    if (!row) {
+      return res.status(404).json({
+        error: 'This Employee ID is not registered for the Gamethon.',
+        code: 'NOT_ALLOWED',
+      });
+    }
+    if (row.emp_status !== 'ACTIVE') {
+      return res.status(403).json({
+        error: 'Your employee account is not active.',
+        code: 'INACTIVE',
+      });
+    }
+    res.json({
+      empId: row.emp_id,
+      empName: row.emp_name.trim(),
+      empStatus: row.emp_status,
+    });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
