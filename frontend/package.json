@@ -3,8 +3,8 @@
   "version": "1.0.0",
   "type": "module",
   "scripts": {
-    "dev": "vite --port 3000 --host 0.0.0.0",
-    "build": "vite build",
+    "dev": "node scripts/copy-public-assets.js && vite --port 3000 --host 0.0.0.0",
+    "build": "node scripts/copy-public-assets.js && vite build",
     "preview": "vite preview"
   },
   "devDependencies": {

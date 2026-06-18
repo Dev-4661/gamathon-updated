@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Gamethon — Bollywood Outdoor Cinema</title>
+<link rel="icon" type="image/png" href="/favicon.png">
 <link rel="stylesheet" href="/styles/gamezone.css">
 </head>
 <body>
@@ -11,7 +12,7 @@
 <div class="site-bg"></div>
 <header class="site-header">
   <div class="brand">
-    <img class="brand-logo-img" src="/src/assets/images/bollywood-outdoor-cinema-logo.png" alt="Bollywood Outdoor Cinema" />
+    <img class="brand-logo-img" src="/images/bollywood-outdoor-cinema-logo.png" alt="Bollywood Outdoor Cinema" />
     <div class="brand-copy">
       <div class="brand-title">Indira IVF Gamethon</div>
       <div class="brand-subtitle">Bollywood Outdoor Cinema</div>
@@ -36,7 +37,7 @@
   const adminBtn = document.getElementById('adminBtn');
   const fsBtn = document.getElementById('fsBtn');
   const API_BASE = '/api';
-  const LOGO_URL = '/src/assets/images/bollywood-outdoor-cinema-logo.png';
+  const LOGO_URL = '/images/bollywood-outdoor-cinema-logo.png';
   let cachedPlayers = [];
 
   function isFullscreen() {
@@ -309,11 +310,11 @@
     { icon: '👁', title: 'Guess the Eye', desc: 'Match superstar eyes to their names' },
   ];
   // ======== GAME 1: SHAMMI KAPOOR PUZZLE ========
-  const SHAMMI_PHOTO_URL = '/src/assets/images/shammi_portrait_1781674060513.jpg';
+  const SHAMMI_PHOTO_URL = '/images/shammi_portrait_1781674060513.jpg';
 
   // ======== GAME 2: GUESS THE MOVIE (Poster) ========
   const ANDHADHUN_POSTER = {
-    image: '/src/assets/images/andhadhun_poster.png',
+    image: '/images/andhadhun_poster.png',
     answer: 'Andhadhun',
     spellingOptions: ['Andhadhun', 'Andhadhoon', 'Andhadhan', 'Andha Dhun', 'Andhadun', 'Andh Dhun']
   };
@@ -331,19 +332,19 @@
   // ======== GAME 4: GUESS THE ACTRESS ========
   const GUESS_ROUNDS = [
     {
-      photo: '/src/assets/images/urmila_matondkar_child.png',
+      photo: '/images/urmila_matondkar_child.png',
       options: ['Urmila Matondkar', 'Alia Bhatt', 'Tabu', 'Karisma Kapoor'],
       answer: 'Urmila Matondkar',
       hint: 'She won hearts as a child artist in the 1983 classic "Masoom"!'
     },
     {
-      photo: '/src/assets/images/deepika_child_1781675460296.jpg',
+      photo: '/images/deepika_child_1781675460296.jpg',
       options: ['Deepika Padukone', 'Anushka Sharma', 'Priyanka Chopra', 'Katrina Kaif'],
       answer: 'Deepika Padukone',
       hint: 'Daughter of badminton legend Prakash Padukone and star of Om Shanti Om!'
     },
     {
-      photo: '/src/assets/images/kareena_child_1781675481034.jpg',
+      photo: '/images/kareena_child_1781675481034.jpg',
       options: ['Kareena Kapoor', 'Karisma Kapoor', 'Sonam Kapoor', 'Kajol'],
       answer: 'Kareena Kapoor',
       hint: 'Affectionately known as "Bebo", granddaughter of Raj Kapoor!'
@@ -1062,14 +1063,14 @@
 
   const EYE_ROUNDS = [
     {
-      img: '/src/assets/images/hema_malini_eyes.png',
+      img: '/images/hema_malini_eyes.png',
       answer: 'Hema Malini',
       title: 'Gaze Alpha',
       hint: 'The Dream Girl of Bollywood — dancer, MP, and star of Sholay and Seeta Aur Geeta!',
       cropClass: 'eye-crop-hema',
     },
     {
-      img: '/src/assets/images/rajesh_khanna_eyes_1781676287894.jpg',
+      img: '/images/rajesh_khanna_eyes_1781676287894.jpg',
       answer: 'Rajesh Khanna',
       title: 'Gaze Beta',
       hint: 'India\'s historic first superstar, legendary voice of "Anand" and romantic head tilt!',

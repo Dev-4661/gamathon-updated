@@ -1,8 +1,14 @@
 import express from 'express';
 import cors from 'cors';
+import path from 'path';
+import fs from 'fs';
+import { fileURLToPath } from 'url';
 import { initDb, testConnection } from './db.js';
 import playersRouter from './routes/players.js';
 import { getEventStatus } from './eventWindow.js';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const frontendDist = path.join(__dirname, '..', 'frontend', 'dist');
 
 const app = express();
 const PORT = parseInt(process.env.PORT || '4000', 10);
@@ -20,6 +26,17 @@ app.get('/api/health', async (_req, res) => {
 });
 
 app.use('/api/players', playersRouter);
+
+if (fs.existsSync(frontendDist)) {
+  app.use(express.static(frontendDist));
+  app.get('*', (req, res, next) => {
+    if (req.path.startsWith('/api')) return next();
+    res.sendFile(path.join(frontendDist, 'index.html'));
+  });
+  console.log(`Serving frontend from ${frontendDist}`);
+} else {
+  console.warn('frontend/dist not found — run "npm run build" before production start');
+}
 
 async function start() {
   try {
