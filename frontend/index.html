@@ -1,0 +1,1474 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Gamethon — Bollywood Arena</title>
+<link rel="stylesheet" href="/styles/gamezone.css">
+</head>
+<body>
+<div id="app-root">
+<div class="site-bg"></div>
+<header class="site-header">
+  <div class="brand">
+    <img class="brand-logo-img" src="/src/assets/images/bollywood-popart-logo.png" alt="Bollywood Gamethon" />
+    <div>
+      <div class="brand-name">GAME<span class="accent">THON</span></div>
+      <div class="brand-tag">Bollywood Arena · Indira IVF</div>
+    </div>
+  </div>
+  <div class="header-actions">
+    <div class="header-live">Now Showing</div>
+    <button class="fs-btn" id="fsBtn" type="button" title="Toggle fullscreen">Fullscreen</button>
+  </div>
+</header>
+<main class="game-shell">
+  <div class="stage">
+    <div id="app"></div>
+  </div>
+</main>
+<footer class="site-footer">Indira IVF Gamethon · Culture Club</footer>
+<button class="admin-link" id="adminBtn">Admin</button>
+</div>
+
+<script>
+(function() {
+  const app = document.getElementById('app');
+  const adminBtn = document.getElementById('adminBtn');
+  const fsBtn = document.getElementById('fsBtn');
+  const API_BASE = '/api';
+  let cachedPlayers = [];
+
+  function isFullscreen() {
+    return !!(document.fullscreenElement || document.webkitFullscreenElement);
+  }
+
+  async function toggleFullscreen() {
+    try {
+      if (!isFullscreen()) {
+        const el = document.documentElement;
+        if (el.requestFullscreen) await el.requestFullscreen();
+        else if (el.webkitRequestFullscreen) await el.webkitRequestFullscreen();
+      } else {
+        if (document.exitFullscreen) await document.exitFullscreen();
+        else if (document.webkitExitFullscreen) await document.webkitExitFullscreen();
+      }
+    } catch (e) { /* user denied or unsupported */ }
+  }
+
+  function updateFsBtn() {
+    if (!fsBtn) return;
+    fsBtn.textContent = isFullscreen() ? 'Exit Fullscreen' : 'Fullscreen';
+  }
+
+  if (fsBtn) {
+    fsBtn.addEventListener('click', toggleFullscreen);
+    document.addEventListener('fullscreenchange', updateFsBtn);
+    document.addEventListener('webkitfullscreenchange', updateFsBtn);
+  }
+
+  async function apiRequest(path, options = {}) {
+    const res = await fetch(`${API_BASE}${path}`, {
+      headers: { 'Content-Type': 'application/json', ...options.headers },
+      ...options,
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      const err = new Error(data.error || `Request failed (${res.status})`);
+      err.code = data.code;
+      err.event = data.event;
+      err.status = res.status;
+      throw err;
+    }
+    return data;
+  }
+
+  async function fetchEventStatus() {
+    return apiRequest('/players/event-status');
+  }
+
+  async function fetchPlayers() {
+    const data = await apiRequest('/players');
+    cachedPlayers = data.players || [];
+    return { players: cachedPlayers };
+  }
+
+  async function loginPlayer(empId, empName) {
+    const data = await apiRequest('/players/login', {
+      method: 'POST',
+      body: JSON.stringify({ empId, empName }),
+    });
+    cachedPlayers = [data.player, ...cachedPlayers.filter(p =>
+      !(p.empId === data.player.empId && p.sessionId === data.player.sessionId)
+    )];
+    if (data.event) eventStatus = data.event;
+    return data.player;
+  }
+
+  async function savePlayer(p) {
+    try {
+      const data = await apiRequest(`/players/${encodeURIComponent(p.empId)}/${p.sessionId}`, {
+        method: 'PUT',
+        body: JSON.stringify({
+          empName: p.empName,
+          status: p.status,
+          gamesCompleted: p.gamesCompleted,
+          timeTaken: p.timeTaken,
+          breakdown: p.breakdown,
+          finishedAt: p.finishedAt || null,
+          sessionExpiresAt: p.sessionExpiresAt || null,
+        }),
+      });
+      const idx = cachedPlayers.findIndex(x => x.empId === p.empId && x.sessionId === p.sessionId);
+      if (idx >= 0) cachedPlayers[idx] = data.player;
+      else cachedPlayers.push(data.player);
+    } catch (err) {
+      console.error('Failed to save player:', err.message);
+    }
+  }
+
+  async function clearAllPlayers() {
+    await apiRequest('/players', { method: 'DELETE' });
+    cachedPlayers = [];
+  }
+  const TOTAL_TIME = 300;
+  const POINTS_PER_SECTION = 20;
+  const WRONG_PENALTY = 4;
+  const SECTION_IDS = ['spot', 'jumble', 'match', 'guess', 'eye'];
+
+  let currentPlayer = null;
+  let gameState = null;
+  let sessionCheckInterval = null;
+  let eventPollInterval = null;
+  let eventStatus = null;
+
+  function formatCountdown(ms) {
+    const total = Math.max(0, Math.ceil(ms / 1000));
+    const m = Math.floor(total / 60);
+    const s = total % 60;
+    return `${m}:${String(s).padStart(2, '0')}`;
+  }
+
+  async function refreshEventStatus() {
+    try {
+      eventStatus = await fetchEventStatus();
+    } catch {
+      if (!eventStatus) {
+        const startAt = Date.parse('2026-06-18T16:00:00+05:30');
+        const endAt = Date.parse('2026-06-18T16:15:00+05:30');
+        const now = Date.now();
+        let phase = 'live';
+        if (now < startAt) phase = 'before';
+        else if (now >= endAt) phase = 'after';
+        eventStatus = {
+          phase,
+          startAt,
+          endAt,
+          now,
+          isOpen: phase === 'live',
+          startLabel: '4:00 pm',
+          endLabel: '4:15 pm',
+          dateLabel: '18 Jun 2026',
+        };
+      }
+    }
+    return eventStatus;
+  }
+
+  function isEventBypassed() {
+    return eventStatus?.bypass === true;
+  }
+
+  function isEventClosed() {
+    return eventStatus && !eventStatus.isOpen && !isEventBypassed();
+  }
+
+  function stopEventPoll() {
+    if (eventPollInterval) {
+      clearInterval(eventPollInterval);
+      eventPollInterval = null;
+    }
+  }
+
+  function startEventPoll(callback) {
+    stopEventPoll();
+    eventPollInterval = setInterval(async () => {
+      const prevPhase = eventStatus?.phase;
+      await refreshEventStatus();
+      if (typeof callback === 'function') callback(prevPhase);
+    }, 1000);
+  }
+
+  function eventGateMessage() {
+    if (!eventStatus) return '';
+    if (isEventBypassed()) {
+      return 'Test mode · <strong>EVENT_BYPASS=true</strong> — event window disabled, play anytime.';
+    }
+    if (eventStatus.phase === 'before') {
+      return `Gamethon opens at <strong>${eventStatus.startLabel}</strong> on ${eventStatus.dateLabel}. Starts in <strong id="eventCountdown">${formatCountdown(eventStatus.startsInMs)}</strong>`;
+    }
+    if (eventStatus.phase === 'after') {
+      return `Gamethon ended at <strong>${eventStatus.endLabel}</strong> on ${eventStatus.dateLabel}.`;
+    }
+    return `Live now · closes at <strong>${eventStatus.endLabel}</strong> · <strong id="eventCountdown">${formatCountdown(eventStatus.endsInMs)}</strong> left`;
+  }
+
+  function updateEventCountdown() {
+    if (!eventStatus) return;
+    const el = document.getElementById('eventCountdown');
+    if (!el) return;
+    const target = eventStatus.phase === 'before' ? eventStatus.startAt : eventStatus.endAt;
+    el.textContent = formatCountdown(target - Date.now());
+  }
+
+  // Session expiry: auto-logout after 5 minutes or when event ends
+  function isSessionExpired() {
+    if (!isEventBypassed() && eventStatus?.endAt && Date.now() >= eventStatus.endAt) return true;
+    if (isEventClosed()) return true;
+    return currentPlayer && currentPlayer.sessionExpiresAt && Date.now() > currentPlayer.sessionExpiresAt;
+  }
+
+  function startSessionMonitor() {
+    if (sessionCheckInterval) clearInterval(sessionCheckInterval);
+    sessionCheckInterval = setInterval(async () => {
+      await refreshEventStatus();
+      if (!isEventBypassed() && gameState?.eventEndAt && Date.now() >= gameState.eventEndAt) {
+        gameState.timeRemaining = 0;
+        clearInterval(gameState.timerInterval);
+        endGame('Event Ended');
+        return;
+      }
+      if (isSessionExpired()) {
+        clearInterval(sessionCheckInterval);
+        sessionCheckInterval = null;
+        if (gameState && gameState.timerInterval) clearInterval(gameState.timerInterval);
+        document.removeEventListener('keydown', handleMazeKey);
+        showSessionExpiredModal(isEventClosed() && eventStatus?.phase === 'after');
+      }
+    }, 1000);
+  }
+
+  function showSessionExpiredModal(eventEnded = false) {
+    const existing = document.getElementById('expiredModal');
+    if (existing) existing.remove();
+    const modal = document.createElement('div');
+    modal.className = 'modal-overlay';
+    modal.id = 'expiredModal';
+    modal.innerHTML = `
+      <div class="modal-box" style="text-align:center;">
+        <div class="rank-modal-emoji">${eventEnded ? '🎬' : '⏱'}</div>
+        <h2 style="color:var(--danger);">${eventEnded ? 'Gamethon Closed' : 'Session Expired'}</h2>
+        <p>${eventEnded
+          ? `Today's Gamethon window (${eventStatus?.startLabel || '4:00 pm'} – ${eventStatus?.endLabel || '4:15 pm'}) has ended.`
+          : 'Your session has expired. Each Employee ID is valid for only 5 minutes after login.'}</p>
+        <p style="margin-top:8px;">${eventEnded ? 'Thank you for playing!' : 'Please log in again to play.'}</p>
+        <div class="modal-actions" style="justify-content:center;margin-top:16px;">
+          <button class="btn-primary" style="width:auto;margin-top:0;" id="expiredOk">Return to Login</button>
+        </div>
+      </div>
+    `;
+    document.body.appendChild(modal);
+    document.getElementById('expiredOk').addEventListener('click', () => {
+      modal.remove();
+      // Save final state if in progress
+      if (currentPlayer && currentPlayer.status === 'In Progress') {
+        currentPlayer.status = 'Session Expired';
+        currentPlayer.timeTaken = gameState ? (TOTAL_TIME - gameState.timeRemaining) : 0;
+        currentPlayer.gamesCompleted = gameState ? gameState.gamesCompleted : 0;
+        if (gameState) {
+          SECTION_IDS.forEach(id => {
+            if (gameState.sectionScores[id] === null) gameState.sectionScores[id] = 0;
+          });
+          recalcTotalScore();
+          currentPlayer.breakdown = buildBreakdownPayload();
+        } else {
+          currentPlayer.breakdown = currentPlayer.breakdown;
+        }
+        currentPlayer.finishedAt = new Date().toISOString();
+        savePlayer(currentPlayer);
+      }
+      currentPlayer = null;
+      gameState = null;
+      renderLogin();
+    });
+  }
+
+  const GAME_STEPS = [
+    { id: 'spot', label: 'Shammi Puzzle', icon: '🧩' },
+    { id: 'jumble', label: 'Guess Movie', icon: '🎬' },
+    { id: 'match', label: 'Dialogue Match', icon: '💬' },
+    { id: 'guess', label: 'Guess Actress', icon: '⭐' },
+    { id: 'eye', label: 'Guess the Eye', icon: '👁' },
+  ];
+
+  const CHALLENGE_CARDS = [
+    { icon: '🧩', title: 'Shammi Kapoor Puzzle', desc: 'Swap tiles to rebuild the golden-era portrait' },
+    { icon: '🎬', title: 'Guess the Movie', desc: 'Identify the blockbuster from a poster clue' },
+    { icon: '💬', title: 'Dialogue Match', desc: 'Pair legendary movies with iconic dialogues' },
+    { icon: '⭐', title: 'Guess the Actress', desc: 'Name Bollywood stars from childhood photos' },
+    { icon: '👁', title: 'Guess the Eye', desc: 'Match superstar eyes to their names' },
+  ];
+  // ======== GAME 1: SHAMMI KAPOOR PUZZLE ========
+  const SHAMMI_PHOTO_URL = '/src/assets/images/shammi_portrait_1781674060513.jpg';
+
+  // ======== GAME 2: GUESS THE MOVIE (Poster) ========
+  const ANDHADHUN_POSTER = {
+    image: '/src/assets/images/andhadhun_poster.png',
+    answer: 'Andhadhun',
+    spellingOptions: ['Andhadhun', 'Andhadhoon', 'Andhadhan', 'Andha Dhun', 'Andhadun', 'Andh Dhun']
+  };
+
+  // ======== GAME 3: MATCH (Famous Movies & Dialogues) ========
+  const MATCH_PAIRS = [
+    { word: 'Anand (Rajesh Khanna)', meaning: '"Babu Moshai, zindagi badi honi chahiye… lambi nahi"' },
+    { word: 'Waqt', meaning: '"Jinke ghar sheeshe ke hote hain, woh doosron par patthar nahi phekte"' },
+    { word: 'Anand (Classic)', meaning: '"Zindagi aur maut upar waale ke haath mein hai jahapanah"' },
+    { word: 'Deewaar', meaning: '"Main aaj bhi pheke hue paise nahi uthata."' },
+    { word: 'Student of the Year (2012)', meaning: '"Life mein kuch banna ho, kuch haasil karna ho… toh hamesha dil ki suno"' },
+    { word: 'War (2019)', meaning: '"Jab tak todenge nahi… tab tak chhodenge nahi"' }
+  ];
+
+  // ======== GAME 4: GUESS THE ACTRESS ========
+  const GUESS_ROUNDS = [
+    {
+      photo: '/src/assets/images/urmila_matondkar_child.png',
+      options: ['Urmila Matondkar', 'Alia Bhatt', 'Tabu', 'Karisma Kapoor'],
+      answer: 'Urmila Matondkar',
+      hint: 'She won hearts as a child artist in the 1983 classic "Masoom"!'
+    },
+    {
+      photo: '/src/assets/images/deepika_child_1781675460296.jpg',
+      options: ['Deepika Padukone', 'Anushka Sharma', 'Priyanka Chopra', 'Katrina Kaif'],
+      answer: 'Deepika Padukone',
+      hint: 'Daughter of badminton legend Prakash Padukone and star of Om Shanti Om!'
+    },
+    {
+      photo: '/src/assets/images/kareena_child_1781675481034.jpg',
+      options: ['Kareena Kapoor', 'Karisma Kapoor', 'Sonam Kapoor', 'Kajol'],
+      answer: 'Kareena Kapoor',
+      hint: 'Affectionately known as "Bebo", granddaughter of Raj Kapoor!'
+    }
+  ];
+
+  // ======== API / DATA ========
+  async function loadData() {
+    try {
+      return await fetchPlayers();
+    } catch {
+      return { players: cachedPlayers };
+    }
+  }
+
+  function escapeHtml(s) {
+    return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  }
+  function initScoring() {
+    gameState.wrongCounts = { spot: 0, jumble: 0, match: 0, guess: 0, eye: 0 };
+    gameState.sectionScores = { spot: null, jumble: null, match: null, guess: null, eye: null };
+    gameState.totalScore = 0;
+  }
+
+  function sectionPointsRemaining(section) {
+    return Math.max(0, POINTS_PER_SECTION - (gameState.wrongCounts[section] || 0) * WRONG_PENALTY);
+  }
+
+  function applyWrongPenalty(section) {
+    gameState.wrongCounts[section] = (gameState.wrongCounts[section] || 0) + 1;
+    return sectionPointsRemaining(section);
+  }
+
+  function wrongAnswerFeedback(section) {
+    const remaining = sectionPointsRemaining(section);
+    return {
+      type: 'error',
+      text: `Wrong answer! −${WRONG_PENALTY} pts. This section: ${remaining}/${POINTS_PER_SECTION} pts remaining.`,
+    };
+  }
+
+  function recalcTotalScore() {
+    gameState.totalScore = SECTION_IDS.reduce((sum, id) => {
+      const s = gameState.sectionScores[id];
+      return sum + (s !== null && s !== undefined ? s : 0);
+    }, 0);
+  }
+
+  function finalizeSectionScore(section, result) {
+    gameState.sectionScores[section] = result === 'solved' ? sectionPointsRemaining(section) : 0;
+    recalcTotalScore();
+  }
+
+  function buildBreakdownPayload() {
+    return {
+      spot: gameState.breakdown.spot,
+      jumble: gameState.breakdown.jumble,
+      match: gameState.breakdown.match,
+      guess: gameState.breakdown.guess,
+      eye: gameState.breakdown.eye,
+      scores: { ...gameState.sectionScores },
+      totalScore: gameState.totalScore,
+      wrongCounts: { ...gameState.wrongCounts },
+    };
+  }
+
+  function currentSectionId() {
+    return SECTION_IDS[gameState.currentGame];
+  }
+
+  function formatTime(s) {
+    const m = Math.floor(s / 60);
+    const sec = s % 60;
+    return `${m}:${sec.toString().padStart(2, '0')}`;
+  }
+
+  // Calculate player's rank (1-indexed) among finished players
+  async function calculateRank(player) {
+    const data = await loadData();
+    const finished = data.players.filter(p => p.status === 'Completed' || p.status === 'Timeout' || p.status === 'Session Expired');
+    const sorted = [...finished].sort((a, b) => {
+      const aS = a.breakdown?.totalScore ?? 0;
+      const bS = b.breakdown?.totalScore ?? 0;
+      if (bS !== aS) return bS - aS;
+      const aG = a.gamesCompleted || 0, bG = b.gamesCompleted || 0;
+      if (bG !== aG) return bG - aG;
+      return (a.timeTaken || 0) - (b.timeTaken || 0);
+    });
+    const rank = sorted.findIndex(p =>
+      p.empId === player.empId && p.sessionId === player.sessionId
+    ) + 1;
+    return { rank: rank || sorted.length, total: sorted.length };
+  }
+
+  function ordinal(n) {
+    const s = ['th', 'st', 'nd', 'rd'];
+    const v = n % 100;
+    return n + (s[(v - 20) % 10] || s[v] || s[0]);
+  }
+
+  // ======== LOGIN ========
+  async function renderLogin() {
+    stopEventPoll();
+    await refreshEventStatus();
+    const locked = isEventClosed();
+    app.innerHTML = `
+      <div class="login-screen">
+        <div class="login-visual">
+          <div class="login-visual-bg" aria-hidden="true"></div>
+          <div class="login-visual-badge">Indira IVF · Culture Club</div>
+          <img class="login-popart" src="/src/assets/images/bollywood-popart-logo.png" alt="Bollywood" />
+          <h2>BOLLYWOOD ARENA</h2>
+          <p>Five blockbuster challenges. Five minutes on the clock. Step onto the red carpet and prove your Bollywood IQ.</p>
+          <img class="login-dance" src="/src/assets/images/bollywood-dance.png" alt="" aria-hidden="true" />
+        </div>
+        <div class="login-form-panel">
+          <div class="login-form-inner">
+            <h3>PLAYER LOGIN</h3>
+            <p class="form-lead">Enter your details to join the arena</p>
+            <div class="event-gate ${locked ? 'locked' : 'live'}" id="eventGate">${eventGateMessage()}</div>
+            <div class="form-group">
+              <label for="empId">Employee ID</label>
+              <input type="text" id="empId" placeholder="e.g. EMP001" autocomplete="off" ${locked ? 'disabled' : ''} />
+            </div>
+            <div class="form-group">
+              <label for="empName">Display Name</label>
+              <input type="text" id="empName" placeholder="Your full name" autocomplete="off" ${locked ? 'disabled' : ''} />
+            </div>
+            <div id="loginError" class="error-msg" style="display:none;"></div>
+            <button class="btn-primary" id="loginBtn" ${locked ? 'disabled' : ''}>${locked ? (eventStatus?.phase === 'after' ? 'Gamethon Closed' : 'Opens Soon') : 'Enter Arena →'}</button>
+          </div>
+        </div>
+      </div>
+    `;
+    if (locked || eventStatus?.phase === 'live') {
+      startEventPoll((prevPhase) => {
+        if (eventStatus?.phase !== prevPhase) renderLogin();
+        else updateEventCountdown();
+      });
+    }
+    if (locked) return;
+    const idInput = document.getElementById('empId');
+    const nameInput = document.getElementById('empName');
+    const err = document.getElementById('loginError');
+    function submit() {
+      const empId = idInput.value.trim();
+      const empName = nameInput.value.trim();
+      if (!empId || !empName) {
+        err.textContent = 'Please fill in both Employee ID and Name.';
+        err.style.display = 'block';
+        return;
+      }
+      const btn = document.getElementById('loginBtn');
+      btn.disabled = true;
+      btn.textContent = 'Connecting...';
+      err.style.display = 'none';
+      loginPlayer(empId, empName).then(player => {
+        currentPlayer = player;
+        stopEventPoll();
+        startSessionMonitor();
+        renderStart();
+      }).catch(e => {
+        if (e.event) eventStatus = e.event;
+        err.textContent = e.message || 'Could not connect to server. Is the backend running?';
+        err.style.display = 'block';
+        btn.disabled = false;
+        btn.textContent = isEventClosed() ? (eventStatus?.phase === 'after' ? 'Gamethon Closed' : 'Opens Soon') : 'Enter Arena →';
+        if (isEventClosed()) renderLogin();
+      });
+    }
+    document.getElementById('loginBtn').addEventListener('click', submit);
+    [idInput, nameInput].forEach(inp => inp.addEventListener('keypress', e => {
+      if (e.key === 'Enter') submit();
+    }));
+  }
+
+  // ======== START SCREEN ========
+  async function renderStart() {
+    await refreshEventStatus();
+    if (isEventClosed()) {
+      renderLogin();
+      return;
+    }
+    const minsLeft = currentPlayer.sessionExpiresAt ? Math.max(0, Math.ceil((currentPlayer.sessionExpiresAt - Date.now()) / 60000)) : 5;
+    const sessionAlert = isEventBypassed()
+      ? `⏱ Test mode (EVENT_BYPASS=true) — session: <strong>${minsLeft} min</strong>`
+      : `⏱ Gamethon closes at <strong>${eventStatus?.endLabel || '4:15 pm'}</strong> · <strong id="eventCountdown">${formatCountdown(eventStatus?.endsInMs || 0)}</strong> left · session: <strong>${minsLeft} min</strong>`;
+    app.innerHTML = `
+      <div class="start-screen">
+        <div class="start-hero">
+          <img class="start-hero-logo" src="/src/assets/images/bollywood-popart-logo.png" alt="Bollywood" />
+          <div class="player-chip">Playing as <strong>${escapeHtml(currentPlayer.empName)}</strong> · ${escapeHtml(currentPlayer.empId)}</div>
+          <h1>READY TO PLAY?</h1>
+          <div class="session-alert">${sessionAlert}</div>
+        </div>
+        <div class="challenge-grid">
+          ${CHALLENGE_CARDS.map((c, i) => `
+            <div class="challenge-card">
+              <div class="num">CHALLENGE ${i + 1}</div>
+              <div class="icon">${c.icon}</div>
+              <div class="title">${c.title}</div>
+              <div class="desc">${c.desc}</div>
+            </div>
+          `).join('')}
+        </div>
+        <div class="start-footer">
+          <p class="start-rules">You have <strong>5 minutes total</strong>. Each challenge is worth <strong>20 points</strong> (100 max). Wrong answers cost <strong>−4 points</strong> from that section. Skip = 0 points for that section.</p>
+          <button class="start-btn" id="startBtn">▶ START GAME</button>
+        </div>
+      </div>
+    `;
+    document.getElementById('startBtn').addEventListener('click', startGame);
+    startEventPoll((prevPhase) => {
+      if (eventStatus?.phase !== prevPhase || isEventClosed()) {
+        if (isEventClosed()) renderLogin();
+        else renderStart();
+      } else {
+        updateEventCountdown();
+      }
+    });
+  }
+
+  // ======== GAME ORCHESTRATOR ========
+  function startGame() {
+    if (isEventClosed()) {
+      renderLogin();
+      return;
+    }
+    const eventSecondsLeft = (!isEventBypassed() && eventStatus)
+      ? Math.max(0, Math.floor((eventStatus.endAt - Date.now()) / 1000))
+      : TOTAL_TIME;
+    const sessionSecondsLeft = currentPlayer?.sessionExpiresAt
+      ? Math.max(0, Math.floor((currentPlayer.sessionExpiresAt - Date.now()) / 1000))
+      : TOTAL_TIME;
+    const allowedTime = isEventBypassed()
+      ? Math.min(TOTAL_TIME, sessionSecondsLeft)
+      : Math.min(TOTAL_TIME, eventSecondsLeft, sessionSecondsLeft);
+    if (allowedTime <= 0) {
+      renderLogin();
+      return;
+    }
+    stopEventPoll();
+    if (!isFullscreen()) toggleFullscreen();
+    gameState = {
+      currentGame: 0,
+      timeRemaining: allowedTime,
+      eventEndAt: isEventBypassed() ? null : (eventStatus?.endAt || null),
+      timerInterval: null,
+      startTime: Date.now(),
+      gamesCompleted: 0,
+      breakdown: { spot: 'pending', jumble: 'pending', match: 'pending', guess: 'pending', eye: 'pending' },
+      feedback: null,
+      // Per-game state
+      spot: { grid: [], selected: null },
+      jumble: { chosen: null, options: [] },
+      match: { matched: [], selWord: null, selMean: null, wrong: null, words: [], meanings: [] },
+      guess: { currentRound: 0, chosen: null, hintShown: false },
+      eye: { selections: EYE_ROUNDS.map(() => null), openDropdown: null, submitted: false, lastVerifyFailed: false }
+    };
+    
+    // Shuffle Game 1 pieces until not fully solved
+    let p_grid = [0, 1, 2, 3, 4, 5, 6, 7, 8];
+    do {
+      p_grid.sort(() => Math.random() - 0.5);
+    } while (p_grid.every((v, i) => v === i));
+    gameState.spot.grid = p_grid;
+
+    gameState.jumble.options = [...ANDHADHUN_POSTER.spellingOptions].sort(() => Math.random() - 0.5);
+
+    initScoring();
+
+    // init match arrays
+    gameState.match.words = [...MATCH_PAIRS.map((p, i) => ({ text: p.word, id: i }))].sort(() => Math.random() - 0.5);
+    gameState.match.meanings = [...MATCH_PAIRS.map((p, i) => ({ text: p.meaning, id: i }))].sort(() => Math.random() - 0.5);
+    
+    gameState.timerInterval = setInterval(tickTimer, 1000);
+    renderCurrentGame();
+    document.addEventListener('keydown', handleMazeKey);
+  }
+
+  function tickTimer() {
+    if (!isEventBypassed() && gameState.eventEndAt && Date.now() >= gameState.eventEndAt) {
+      gameState.timeRemaining = 0;
+      clearInterval(gameState.timerInterval);
+      endGame('Event Ended');
+      return;
+    }
+    gameState.timeRemaining--;
+    if (gameState.timeRemaining <= 0) {
+      gameState.timeRemaining = 0;
+      clearInterval(gameState.timerInterval);
+      endGame('Timeout');
+      return;
+    }
+    const el = document.getElementById('timerDisplay');
+    if (el) {
+      el.textContent = formatTime(gameState.timeRemaining);
+      el.className = 'timer-pill' + (gameState.timeRemaining <= 30 ? ' danger' : gameState.timeRemaining <= 90 ? ' warning' : '');
+    }
+  }
+
+  function renderCurrentGame() {
+    const games = ['spot', 'jumble', 'match', 'guess', 'eye'];
+    const g = games[gameState.currentGame];
+    if (!g) { endGame('Completed'); return; }
+    if (g === 'spot') renderSpot();
+    else if (g === 'jumble') renderJumble();
+    else if (g === 'match') renderMatch();
+    else if (g === 'guess') renderGuess();
+    else if (g === 'eye') renderEye();
+  }
+
+  function gameHeader(gameNum, gameTitle, subInfo) {
+    const progressHtml = GAME_STEPS.map((step, i) => {
+      let cls = 'progress-step';
+      if (i < gameState.currentGame) cls += ' done';
+      else if (i === gameState.currentGame) cls += ' active';
+      return `<div class="${cls}"><span class="dot"></span>${step.icon} ${step.label}</div>`;
+    }).join('');
+
+    return `
+      <div class="arena-wrap">
+        <aside class="arena-sidebar">
+          <div class="arena-timer-card">
+            <div class="arena-timer-label">Time Left</div>
+            <div class="timer-pill" id="timerDisplay">${formatTime(gameState.timeRemaining)}</div>
+          </div>
+          <div class="arena-stat-card">
+            <div class="label">Player</div>
+            <div class="value"><strong>${escapeHtml(currentPlayer.empName)}</strong><br><span style="color:var(--text-muted);font-size:12px;font-weight:500;">${escapeHtml(currentPlayer.empId)}</span></div>
+          </div>
+          <div class="arena-stat-card">
+            <div class="label">Score</div>
+            <div class="value"><strong>${gameState.totalScore}</strong> / 100</div>
+          </div>
+          <div class="arena-stat-card">
+            <div class="label">This Section</div>
+            <div class="value"><strong>${sectionPointsRemaining(currentSectionId())}</strong> / ${POINTS_PER_SECTION} pts</div>
+          </div>
+          <div class="arena-stat-card">
+            <div class="label">Progress</div>
+            <div class="value"><strong>${gameState.gamesCompleted} / 5</strong> cleared</div>
+          </div>
+          <div class="arena-progress">
+            <div class="arena-progress-title">Challenges</div>
+            ${progressHtml}
+          </div>
+        </aside>
+        <section class="arena-main">
+          <div class="arena-main-head">
+            <div class="level-tag">Level ${gameNum} of 5</div>
+            <h2>${gameTitle}</h2>
+            <div class="sub">${subInfo || ''}</div>
+          </div>
+          <div class="arena-main-body">
+    `;
+  }
+
+  function gameFooter() {
+    return `</div></section></div>`;
+  }
+
+  function advanceGame(result) {
+    const games = ['spot', 'jumble', 'match', 'guess', 'eye'];
+    const g = games[gameState.currentGame];
+    finalizeSectionScore(g, result);
+    gameState.breakdown[g] = result;
+    if (result === 'solved') gameState.gamesCompleted++;
+    gameState.currentGame++;
+    gameState.feedback = null;
+
+    if (gameState.currentGame >= 5) {
+      endGame('Completed');
+      return;
+    }
+    renderCurrentGame();
+  }
+
+  // ======== GAME 1: SHAMMI KAPOOR PUZZLE ========
+  function renderSpot() {
+    const s = gameState.spot;
+    const isSolved = s.grid.every((v, i) => v === i);
+    
+    app.innerHTML = gameHeader(1, 'Shammi Kapoor Puzzle', isSolved ? 'Portrait complete!' : 'Arrange the tiles to rebuild the portrait') +
+      (gameState.feedback ? `<div class="feedback ${gameState.feedback.type}">${gameState.feedback.text}</div>` : '') +
+      `<p class="instruction">Tap a tile to select it, then tap another to swap. Reconstruct Shammi Kapoor's portrait!</p>
+      <div class="puzzle-layout">
+        <div class="puzzle-board" id="puzzleBoard">
+          ${s.grid.map((originalIdx, currentPos) => {
+            const col = originalIdx % 3;
+            const row = Math.floor(originalIdx / 3);
+            const isSelected = s.selected === currentPos;
+            return `
+              <div class="puzzle-tile${isSelected ? ' selected' : ''}" data-pos="${currentPos}" style="
+                background-image: url('${SHAMMI_PHOTO_URL}');
+                background-size: 300% 300%;
+                background-position: ${col * 50}% ${row * 50}%;
+              "></div>
+            `;
+          }).join('')}
+        </div>
+        <div class="puzzle-preview">
+          <div class="puzzle-preview-label">Target</div>
+          <div class="puzzle-preview-img">
+            <img src="${SHAMMI_PHOTO_URL}" alt="Target portrait" referrerPolicy="no-referrer">
+          </div>
+          <div class="puzzle-preview-caption">Golden Era Legend</div>
+        </div>
+      </div>
+      <div class="game-actions">
+        <button class="btn-warn" id="skipBtn">Skip Challenge</button>
+      </div>` + gameFooter();
+
+    document.querySelectorAll('.puzzle-tile').forEach(tile => {
+      tile.addEventListener('click', () => {
+        if (isSolved) return;
+        const pos = parseInt(tile.dataset.pos);
+        if (s.selected === null) {
+          s.selected = pos;
+          renderSpot();
+        } else {
+          const temp = s.grid[s.selected];
+          s.grid[s.selected] = s.grid[pos];
+          s.grid[pos] = temp;
+          s.selected = null;
+          
+          if (s.grid.every((v, i) => v === i)) {
+            gameState.feedback = { type: 'success', text: '🎉 Brilliant! Portrait complete! +' + sectionPointsRemaining('spot') + ' pts.' };
+            renderSpot();
+            setTimeout(() => advanceGame('solved'), 1100);
+            return;
+          }
+          renderSpot();
+        }
+      });
+    });
+
+    document.getElementById('skipBtn').addEventListener('click', () => advanceGame('skipped'));
+  }
+
+  // ======== GAME 2: GUESS THE MOVIE (Poster) ========
+  function renderJumble() {
+    const r = gameState.jumble;
+    const finished = r.chosen !== null;
+    const isCorrect = finished && r.chosen === ANDHADHUN_POSTER.answer;
+
+    app.innerHTML = gameHeader(2, 'Guess the Movie', 'Identify the blockbuster from the poster clue') +
+      (gameState.feedback ? `<div class="feedback ${gameState.feedback.type}">${gameState.feedback.text}</div>` : '') +
+      `<p class="instruction">Study the poster below and pick the <strong>correct spelling</strong> of the movie name.</p>
+      <div class="game-panel">
+        <div class="media-frame">
+          <img src="${ANDHADHUN_POSTER.image}" alt="Movie poster clue">
+        </div>
+        <div class="game-panel-title">Select the correct spelling</div>
+        <div class="options-grid">
+          ${r.options.map(opt => {
+            let btnCls = 'match-item';
+            if (finished) {
+              if (isCorrect && opt === r.chosen) btnCls += ' matched';
+              else if (!isCorrect && opt === r.chosen) btnCls += ' wrong';
+              else btnCls += ' disabled';
+            }
+            return `<div class="${btnCls}" data-opt="${opt}">${opt}</div>`;
+          }).join('')}
+        </div>
+      </div>
+      <div class="game-actions">
+        <button class="btn-warn" id="skipBtn">Skip Challenge</button>
+      </div>` + gameFooter();
+
+    document.querySelectorAll('[data-opt]').forEach(item => {
+      item.addEventListener('click', () => {
+        if (finished) return;
+        const choice = item.dataset.opt;
+        r.chosen = choice;
+
+        if (choice === ANDHADHUN_POSTER.answer) {
+          gameState.feedback = { type: 'success', text: '🎉 Correct! +' + sectionPointsRemaining('jumble') + ' pts for this section.' };
+          renderJumble();
+          setTimeout(() => advanceGame('solved'), 1100);
+        } else {
+          applyWrongPenalty('jumble');
+          gameState.feedback = wrongAnswerFeedback('jumble');
+          renderJumble();
+          setTimeout(() => {
+            r.chosen = null;
+            gameState.feedback = null;
+            renderJumble();
+          }, 1500);
+        }
+      });
+    });
+
+    document.getElementById('skipBtn').addEventListener('click', () => advanceGame('skipped'));
+  }
+
+  // ======== DIALOGUE MATCH ========
+  function renderMatch() {
+    const m = gameState.match;
+    const done = m.matched.length === MATCH_PAIRS.length;
+    app.innerHTML = gameHeader(3, 'Dialogue Match', `Matched ${m.matched.length} of ${MATCH_PAIRS.length}`) +
+      (gameState.feedback ? `<div class="feedback ${gameState.feedback.type}">${gameState.feedback.text}</div>` : '') +
+      `<p class="instruction">Tap a movie on the left, then tap its matching dialogue on the right.</p>
+      <div class="match-grid">
+        <div class="match-col">
+          <div class="match-col-title">Movies</div>
+          ${m.words.map(w => {
+            const isMatched = m.matched.includes(w.id);
+            const isSel = m.selWord === w.id;
+            const isWrong = m.wrong && m.wrong.w === w.id;
+            return `<div class="match-item ${isMatched ? 'matched' : ''} ${isSel ? 'selected' : ''} ${isWrong ? 'wrong' : ''}" data-w="${w.id}">${w.text}</div>`;
+          }).join('')}
+        </div>
+        <div class="match-col">
+          <div class="match-col-title">Dialogues</div>
+          ${m.meanings.map(x => {
+            const isMatched = m.matched.includes(x.id);
+            const isSel = m.selMean === x.id;
+            const isWrong = m.wrong && m.wrong.m === x.id;
+            return `<div class="match-item ${isMatched ? 'matched' : ''} ${isSel ? 'selected' : ''} ${isWrong ? 'wrong' : ''}" data-m="${x.id}">${x.text}</div>`;
+          }).join('')}
+        </div>
+      </div>
+      <div class="game-actions">
+        <button class="btn-warn" id="skipBtn">Skip Challenge</button>
+      </div>` + gameFooter();
+
+    document.querySelectorAll('[data-w]').forEach(el => {
+      el.addEventListener('click', () => {
+        const id = parseInt(el.dataset.w);
+        if (m.matched.includes(id)) return;
+        m.selWord = id;
+        checkMatch();
+      });
+    });
+    document.querySelectorAll('[data-m]').forEach(el => {
+      el.addEventListener('click', () => {
+        const id = parseInt(el.dataset.m);
+        if (m.matched.includes(id)) return;
+        m.selMean = id;
+        checkMatch();
+      });
+    });
+    document.getElementById('skipBtn').addEventListener('click', () => advanceGame('skipped'));
+  }
+
+  function checkMatch() {
+    const m = gameState.match;
+    if (m.selWord !== null && m.selMean !== null) {
+      if (m.selWord === m.selMean) {
+        m.matched.push(m.selWord);
+        m.selWord = null; m.selMean = null; m.wrong = null;
+        if (m.matched.length === MATCH_PAIRS.length) {
+          gameState.feedback = { type: 'success', text: '🎉 All matched! Moving to next game...' };
+          renderMatch();
+          setTimeout(() => advanceGame('solved'), 900);
+          return;
+        }
+        renderMatch();
+      } else {
+        applyWrongPenalty('match');
+        m.wrong = { w: m.selWord, m: m.selMean };
+        gameState.feedback = wrongAnswerFeedback('match');
+        renderMatch();
+        setTimeout(() => {
+          m.selWord = null; m.selMean = null; m.wrong = null;
+          gameState.feedback = null;
+          renderMatch();
+        }, 700);
+      }
+    } else {
+      renderMatch();
+    }
+  }
+
+  // ======== GAME 4: GUESS THE ACTRESS ========
+  function renderGuess() {
+    const gs = gameState.guess;
+    const round = GUESS_ROUNDS[gs.currentRound];
+    const isFinished = gs.chosen !== null;
+    const isCorrect = isFinished && gs.chosen === round.answer;
+
+    app.innerHTML = gameHeader(4, 'Guess the Actress', `Round ${gs.currentRound + 1} of ${GUESS_ROUNDS.length}`) +
+      (gameState.feedback ? `<div class="feedback ${gameState.feedback.type}">${gameState.feedback.text}</div>` : '') +
+      `<p class="instruction">Examine the childhood photo and identify the Bollywood superstar.</p>
+      <div class="game-panel">
+        <div class="media-frame portrait">
+          <img src="${round.photo}" alt="Childhood photo" referrerPolicy="no-referrer">
+        </div>
+        <div id="hintBox">
+          ${gs.hintShown
+            ? `<div class="hint-box">Hint: ${round.hint}</div>`
+            : `<button class="btn-secondary" id="hintBtn">Show Hint</button>`
+          }
+        </div>
+        <div class="game-panel-title">Who is she?</div>
+        <div class="options-grid cols-2">
+          ${round.options.map(opt => {
+            let btnClass = 'match-item';
+            if (isFinished) {
+              if (isCorrect && opt === gs.chosen) btnClass += ' matched';
+              else if (!isCorrect && opt === gs.chosen) btnClass += ' wrong';
+              else btnClass += ' disabled';
+            }
+            return `<div class="${btnClass}" data-opt="${opt}">${opt}</div>`;
+          }).join('')}
+        </div>
+      </div>
+      <div class="game-actions">
+        <button class="btn-warn" id="skipBtn">Skip Challenge</button>
+      </div>` + gameFooter();
+
+    if (!isFinished) {
+      document.querySelectorAll('.game-panel .match-item').forEach(item => {
+        item.addEventListener('click', () => {
+          const selected = item.dataset.opt;
+          gs.chosen = selected;
+          if (selected === round.answer) {
+            gameState.feedback = { type: 'success', text: '🎉 Correct!' };
+            renderGuess();
+            setTimeout(() => {
+              gameState.feedback = null;
+              if (gs.currentRound + 1 < GUESS_ROUNDS.length) {
+                gs.currentRound++;
+                gs.chosen = null;
+                gs.hintShown = false;
+                renderGuess();
+              } else {
+                advanceGame('solved');
+              }
+            }, 1200);
+          } else {
+            applyWrongPenalty('guess');
+            gameState.feedback = wrongAnswerFeedback('guess');
+            renderGuess();
+            setTimeout(() => {
+              gs.chosen = null;
+              gameState.feedback = null;
+              renderGuess();
+            }, 1200);
+          }
+        });
+      });
+
+      const hintBtn = document.getElementById('hintBtn');
+      if (hintBtn) {
+        hintBtn.addEventListener('click', () => {
+          gs.hintShown = true;
+          renderGuess();
+        });
+      }
+    }
+
+    document.getElementById('skipBtn').addEventListener('click', () => advanceGame('skipped'));
+  }
+
+  function handleMazeKey() {
+    // Left as noop to prevent breaking existing unregister handlers
+  }
+
+  // ======== GAME 5: GUESS THE EYE AND MATCH THE FOLLOWING ========
+  const EYE_CANDIDATES = [
+    'Hema Malini',
+    'Rekha',
+    'Jaya Bachchan',
+    'Sharmila Tagore',
+    'Zeenat Aman',
+    'Parveen Babi',
+    'Rakhee',
+    'Mumtaz',
+    'Saira Banu',
+    'Rajesh Khanna',
+  ];
+
+  const EYE_ROUNDS = [
+    {
+      img: '/src/assets/images/hema_malini_eyes.png',
+      answer: 'Hema Malini',
+      title: 'Gaze Alpha',
+      hint: 'The Dream Girl of Bollywood — dancer, MP, and star of Sholay and Seeta Aur Geeta!',
+      cropClass: 'eye-crop-hema',
+    },
+    {
+      img: '/src/assets/images/rajesh_khanna_eyes_1781676287894.jpg',
+      answer: 'Rajesh Khanna',
+      title: 'Gaze Beta',
+      hint: 'India\'s historic first superstar, legendary voice of "Anand" and romantic head tilt!',
+      cropClass: 'eye-crop-rajesh',
+    },
+  ];
+
+  function renderEye() {
+    const eyeState = gameState.eye;
+    
+    // Check if player has made selections for all cards to show Submit
+    const allSelected = eyeState.selections.every(s => s !== null);
+
+    app.innerHTML = gameHeader(5, 'Guess the Eye', 'Final challenge — match each gaze to a superstar') +
+      (gameState.feedback ? `<div class="feedback ${gameState.feedback.type}">${gameState.feedback.text}</div>` : '') +
+      `<p class="instruction">Match both eye close-ups to the correct superstar from the list of legendary contenders.</p>
+      <div class="eyes-grid eyes-grid-2">
+        ${EYE_ROUNDS.map((round, idx) => {
+          const selectedActor = eyeState.selections[idx];
+          const isDropdownOpen = eyeState.openDropdown === idx;
+          let cardCls = 'eye-card';
+          let badgeHtml = '';
+          if (eyeState.submitted && eyeState.lastVerifyFailed) {
+            if (selectedActor && selectedActor !== round.answer) {
+              cardCls += ' incorrect';
+              badgeHtml = '<span class="eye-badge no">Wrong</span>';
+            }
+          } else if (eyeState.submitted && !eyeState.lastVerifyFailed) {
+            cardCls += ' correct';
+            badgeHtml = '<span class="eye-badge ok">Correct</span>';
+          }
+          return `
+            <div class="${cardCls}" data-idx="${idx}">
+              ${badgeHtml}
+              <div class="eye-card-title">${round.title}</div>
+              <div class="eye-photo-frame eyes-only">
+                <img src="${round.img}" class="${round.cropClass || 'eye-crop'}" alt="Superstar gaze" referrerPolicy="no-referrer">
+              </div>
+              <div class="eye-hint">${round.hint}</div>
+              <div class="eye-select-wrap">
+                <button class="eye-dropdown-btn" data-card-idx="${idx}" type="button">
+                  <span>${selectedActor || 'Select superstar'}</span>
+                  <span>${isDropdownOpen ? '▲' : '▼'}</span>
+                </button>
+                <div class="eye-dropdown-menu" style="display:${isDropdownOpen ? 'block' : 'none'};">
+                  ${EYE_CANDIDATES.map(candId => `
+                    <div class="eye-option-item ${selectedActor === candId ? 'selected' : ''}" data-card-idx="${idx}" data-val="${candId}">
+                      ${candId}
+                    </div>
+                  `).join('')}
+                </div>
+              </div>
+            </div>
+          `;
+        }).join('')}
+      </div>
+      <div class="game-actions centered">
+        <button class="btn-warn" id="skipBtn">Skip Challenge</button>
+        <button class="btn-success" id="submitEyeBtn" ${!allSelected ? 'disabled' : ''}>Verify Matches</button>
+      </div>` + gameFooter();
+
+    // Dropdown toggle listeners
+    document.querySelectorAll('.eye-dropdown-btn').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const cardIdx = parseInt(btn.dataset.cardIdx);
+        // Toggle this dropdown, close others
+        if (eyeState.openDropdown === cardIdx) {
+          eyeState.openDropdown = null;
+        } else {
+          eyeState.openDropdown = cardIdx;
+        }
+        renderEye();
+      });
+    });
+
+    // Option selection listeners
+    document.querySelectorAll('.eye-option-item').forEach(item => {
+      item.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const cardIdx = parseInt(item.dataset.cardIdx);
+        const val = item.dataset.val;
+        eyeState.selections[cardIdx] = val;
+        eyeState.openDropdown = null;
+        renderEye();
+      });
+    });
+
+    // Verify submission button
+    const submitBtn = document.getElementById('submitEyeBtn');
+    if (submitBtn) {
+      submitBtn.addEventListener('click', () => {
+        eyeState.submitted = true;
+        const correctAnswers = EYE_ROUNDS.map(r => r.answer);
+        const matchesAll = eyeState.selections.every((sel, i) => sel === correctAnswers[i]);
+
+        if (matchesAll) {
+          eyeState.lastVerifyFailed = false;
+          gameState.feedback = { type: 'success', text: '🎉 All matches correct! +' + sectionPointsRemaining('eye') + ' pts for this section.' };
+          renderEye();
+          setTimeout(() => advanceGame('solved'), 1500);
+        } else {
+          eyeState.lastVerifyFailed = true;
+          eyeState.selections.forEach((sel, i) => {
+            if (sel !== correctAnswers[i]) applyWrongPenalty('eye');
+          });
+          gameState.feedback = wrongAnswerFeedback('eye');
+          renderEye();
+          setTimeout(() => {
+            eyeState.submitted = false;
+            eyeState.lastVerifyFailed = false;
+            gameState.feedback = null;
+            renderEye();
+          }, 2500);
+        }
+      });
+    }
+
+    document.getElementById('skipBtn').addEventListener('click', () => advanceGame('skipped'));
+  }
+
+  // ======== END GAME ========
+  function endGame(status) {
+    clearInterval(gameState.timerInterval);
+    document.removeEventListener('keydown', handleMazeKey);
+    const timeTaken = TOTAL_TIME - gameState.timeRemaining;
+
+    if ((status === 'Timeout' || status === 'Event Ended') && gameState.currentGame < 5) {
+      const g = SECTION_IDS[gameState.currentGame];
+      if (gameState.breakdown[g] === 'pending') {
+        gameState.breakdown[g] = 'missed';
+        gameState.sectionScores[g] = 0;
+      }
+    }
+    SECTION_IDS.forEach(id => {
+      if (gameState.sectionScores[id] === null) {
+        gameState.sectionScores[id] = 0;
+      }
+    });
+    recalcTotalScore();
+
+    currentPlayer.status = status;
+    currentPlayer.gamesCompleted = gameState.gamesCompleted;
+    currentPlayer.timeTaken = timeTaken;
+    currentPlayer.breakdown = buildBreakdownPayload();
+    currentPlayer.finishedAt = new Date().toISOString();
+    savePlayer(currentPlayer);
+    renderResults(status, timeTaken);
+  }
+
+  function renderResults(status, timeTaken) {
+    if (sessionCheckInterval) { clearInterval(sessionCheckInterval); sessionCheckInterval = null; }
+    const isTimeout = status === 'Timeout' || status === 'Event Ended';
+    const bd = currentPlayer.breakdown || gameState.breakdown;
+    const scores = bd.scores || gameState.sectionScores || {};
+    const totalScore = bd.totalScore ?? gameState.totalScore ?? 0;
+    const labels = { spot: 'Shammi Kapoor Puzzle', jumble: 'Guess the Movie', match: 'Dialogue Match', guess: 'Guess the Actress', eye: 'Guess the Eye' };
+    const statusLabels = {
+      solved: { cls: 'solved', text: 'Solved' },
+      skipped: { cls: 'skipped', text: 'Skipped' },
+      pending: { cls: 'missed', text: 'Not reached' },
+      missed: { cls: 'missed', text: 'Not reached' },
+    };
+
+    calculateRank(currentPlayer).then(rankInfo => {
+    app.innerHTML = `
+      <div class="results-screen">
+        <h1>${isTimeout ? "TIME'S UP" : 'ALL DONE'}</h1>
+        <div class="result-badge ${isTimeout ? 'timeout' : 'completed'}">${status}</div>
+        <p class="subtitle">Great effort, <strong style="color:var(--accent-3);">${escapeHtml(currentPlayer.empName)}</strong>!</p>
+        <div class="result-stats">
+          <div class="result-stat">
+            <div class="label">Total Score</div>
+            <div class="value">${totalScore}<span style="font-size:20px;color:var(--text-muted);">/100</span></div>
+          </div>
+          <div class="result-stat">
+            <div class="label">Games Solved</div>
+            <div class="value">${gameState.gamesCompleted}<span style="font-size:20px;color:var(--text-muted);">/5</span></div>
+          </div>
+          <div class="result-stat">
+            <div class="label">Time Taken</div>
+            <div class="value">${formatTime(timeTaken)}</div>
+          </div>
+        </div>
+        <div class="game-breakdown">
+          <h3>Challenge Breakdown</h3>
+          ${SECTION_IDS.map(k => {
+            const s = statusLabels[bd[k]] || statusLabels.pending;
+            const pts = scores[k] !== null && scores[k] !== undefined ? scores[k] : 0;
+            return `<div class="breakdown-row">
+              <span>${labels[k]}</span>
+              <span class="status ${s.cls}">${s.text} · ${pts}/${POINTS_PER_SECTION} pts</span>
+            </div>`;
+          }).join('')}
+        </div>
+        <div class="action-row">
+          <button class="btn-secondary" id="logout">Logout</button>
+        </div>
+      </div>
+    `;
+    document.getElementById('logout').addEventListener('click', () => {
+      if (sessionCheckInterval) { clearInterval(sessionCheckInterval); sessionCheckInterval = null; }
+      currentPlayer = null;
+      renderLogin();
+    });
+
+    // Show rank dashboard popup immediately
+    setTimeout(() => showRankDashboard(rankInfo, timeTaken), 300);
+    });
+  }
+
+  function showRankDashboard(rankInfo, timeTaken) {
+    const existing = document.getElementById('rankModal');
+    if (existing) existing.remove();
+    const rank = rankInfo.rank;
+    const total = rankInfo.total;
+    const rankColor = rank === 1 ? '#FAC775' : rank === 2 ? '#D3D1C7' : rank === 3 ? '#F0997B' : '#F4C430';
+    const rankEmoji = rank === 1 ? '🥇' : rank === 2 ? '🥈' : rank === 3 ? '🥉' : '🏅';
+    const message = rank === 1 ? "You're in 1st place! Champion 🎉" :
+                    rank <= 3 ? `Excellent! You're on the podium!` :
+                    rank <= 10 ? `Great job! You made it to the Top 10!` :
+                    `Well played! Keep practicing to climb the ranks.`;
+
+    const modal = document.createElement('div');
+    modal.className = 'modal-overlay';
+    modal.id = 'rankModal';
+    modal.innerHTML = `
+      <div class="modal-box" style="text-align:center;">
+        <div class="rank-modal-emoji">${rankEmoji}</div>
+        <h2 style="font-size:16px;color:var(--text-muted);margin-bottom:4px;font-family:var(--font-body);font-weight:500;letter-spacing:0;">Your Rank</h2>
+        <div class="rank-modal-position" style="color:${rankColor};">${ordinal(rank)}</div>
+        <p style="font-size:14px;margin-bottom:16px;">out of ${total} player${total !== 1 ? 's' : ''}</p>
+        <div class="rank-modal-stats">
+          <div class="rank-modal-stats-grid">
+            <div>
+              <div class="stat-label">Score</div>
+              <div class="stat-val">${(currentPlayer.breakdown?.totalScore ?? gameState.totalScore)}/100</div>
+            </div>
+            <div>
+              <div class="stat-label">Solved</div>
+              <div class="stat-val">${gameState.gamesCompleted}/5</div>
+            </div>
+            <div>
+              <div class="stat-label">Time</div>
+              <div class="stat-val">${formatTime(timeTaken)}</div>
+            </div>
+          </div>
+        </div>
+        <p style="font-size:14px;font-weight:500;margin-bottom:18px;">${message}</p>
+        <button class="btn-primary" style="width:100%;margin-top:0;" id="rankClose">View Details</button>
+      </div>
+    `;
+    document.body.appendChild(modal);
+    document.getElementById('rankClose').addEventListener('click', () => modal.remove());
+    modal.addEventListener('click', (e) => { if (e.target === modal) modal.remove(); });
+  }
+
+  // ======== ADMIN ========
+  let adminTab = 'employees';
+  function renderAdmin() {
+    app.innerHTML = `
+      <div class="admin-screen">
+        <h1>CONTROL ROOM</h1>
+        <p class="subtitle">Player stats & leaderboard</p>
+        <div class="admin-tabs">
+          <button class="admin-tab ${adminTab==='employees'?'active':''}" data-tab="employees">Employee Status</button>
+          <button class="admin-tab ${adminTab==='leaderboard'?'active':''}" data-tab="leaderboard">Leaderboard</button>
+        </div>
+        <div id="adminContent"><div class="empty-state">Loading records...</div></div>
+        <div class="admin-toolbar">
+          <button class="btn-secondary" id="exitAdmin">← Back</button>
+          <button class="btn-warn" id="clearData">Clear All Data</button>
+        </div>
+      </div>
+    `;
+    document.querySelectorAll('.admin-tab').forEach(t => {
+      t.addEventListener('click', () => { adminTab = t.dataset.tab; renderAdmin(); });
+    });
+    document.getElementById('exitAdmin').addEventListener('click', () => {
+      if (currentPlayer) renderStart(); else renderLogin();
+    });
+    document.getElementById('clearData').addEventListener('click', () => {
+      if (confirm('Delete ALL game records from the database? This cannot be undone.')) {
+        clearAllPlayers().then(() => renderAdmin()).catch(err => alert(err.message));
+      }
+    });
+    loadData().then(data => {
+      if (adminTab === 'employees') renderEmployees(data);
+      else renderLeaderboard(data);
+    }).catch(err => {
+      document.getElementById('adminContent').innerHTML =
+        `<div class="empty-state">Could not load data: ${escapeHtml(err.message)}</div>`;
+    });
+  }
+
+  function renderEmployees(data) {
+    const container = document.getElementById('adminContent');
+    if (!data.players.length) {
+      container.innerHTML = `<div class="empty-state">📭 No employee records yet.<br><small>Records appear here after players log in.</small></div>`;
+      return;
+    }
+    const sorted = [...data.players].sort((a, b) => new Date(b.startedAt) - new Date(a.startedAt));
+    container.innerHTML = `
+      <div style="overflow-x:auto;">
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th>Name</th>
+            <th>Employee ID</th>
+            <th>Score</th>
+            <th>Games Completed</th>
+            <th>Time Taken</th>
+            <th>Status</th>
+            <th>Started</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${sorted.map(p => `
+            <tr>
+              <td><strong>${escapeHtml(p.empName)}</strong></td>
+              <td>${escapeHtml(p.empId)}</td>
+              <td><strong style="color:var(--accent-3);">${p.breakdown?.totalScore ?? 0}/100</strong></td>
+              <td>${p.gamesCompleted || 0} / 5</td>
+              <td>${p.status === 'In Progress' ? '—' : formatTime(p.timeTaken || 0)}</td>
+              <td><span class="status-badge ${p.status==='Completed'?'completed':p.status==='Timeout'?'timeout':p.status==='Session Expired'?'expired':'progress'}">${p.status}</span></td>
+              <td style="color:var(--text-muted);font-size:12px;">${new Date(p.startedAt).toLocaleString()}</td>
+            </tr>
+          `).join('')}
+        </tbody>
+      </table>
+      </div>
+      <p style="margin-top:12px;font-size:13px;color:var(--text-muted);">Total records: ${data.players.length}</p>
+    `;
+  }
+
+  function renderLeaderboard(data) {
+    const container = document.getElementById('adminContent');
+    const finished = data.players.filter(p => p.status !== 'In Progress');
+    if (!finished.length) {
+      container.innerHTML = `<div class="empty-state">🏆 No completed games yet.<br><small>Leaderboard will populate as employees finish their challenge.</small></div>`;
+      return;
+    }
+    const sorted = [...finished].sort((a, b) => {
+      const aS = a.breakdown?.totalScore ?? 0;
+      const bS = b.breakdown?.totalScore ?? 0;
+      if (bS !== aS) return bS - aS;
+      const aG = a.gamesCompleted || 0, bG = b.gamesCompleted || 0;
+      if (bG !== aG) return bG - aG;
+      return (a.timeTaken || 0) - (b.timeTaken || 0);
+    }).slice(0, 10);
+    container.innerHTML = `
+      <div style="overflow-x:auto;">
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th style="width:60px;">Rank</th>
+            <th>Name</th>
+            <th>Employee ID</th>
+            <th>Score</th>
+            <th>Games Solved</th>
+            <th>Time Taken</th>
+            <th>Status</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${sorted.map((p, i) => `
+            <tr>
+              <td>
+                <span class="rank-badge ${i===0?'gold':i===1?'silver':i===2?'bronze':''}">
+                  ${i===0?'🥇':i===1?'🥈':i===2?'🥉':(i+1)}
+                </span>
+              </td>
+              <td><strong>${escapeHtml(p.empName)}</strong></td>
+              <td>${escapeHtml(p.empId)}</td>
+              <td><strong style="color:var(--accent-3);">${p.breakdown?.totalScore ?? 0}/100</strong></td>
+              <td><strong>${p.gamesCompleted || 0} / 5</strong></td>
+              <td><strong>${formatTime(p.timeTaken || 0)}</strong></td>
+              <td><span class="status-badge ${p.status==='Completed'?'completed':'timeout'}">${p.status}</span></td>
+            </tr>
+          `).join('')}
+        </tbody>
+      </table>
+      </div>
+      <p style="margin-top:12px;font-size:13px;color:var(--text-muted);">Ranked by highest score, then games solved, then fastest time.</p>
+    `;
+  }
+
+  // ======== INIT ========
+  function showAdminLogin() {
+    // Remove any existing modal
+    const existing = document.getElementById('adminModal');
+    if (existing) existing.remove();
+
+    const modal = document.createElement('div');
+    modal.className = 'modal-overlay';
+    modal.id = 'adminModal';
+    modal.innerHTML = `
+      <div class="modal-box">
+        <h2>🔐 Admin Access</h2>
+        <p>Enter admin password to open the Control Center.</p>
+        <input type="password" id="adminPwdInput" placeholder="Password" autofocus />
+        <div class="modal-err" id="adminErr">Incorrect password. Try "admin" or "admin123".</div>
+        <div class="modal-actions">
+          <button class="btn-secondary" id="adminCancel">Cancel</button>
+          <button class="btn-primary" style="width:auto;margin-top:0;" id="adminSubmit">Login</button>
+        </div>
+      </div>
+    `;
+    document.body.appendChild(modal);
+
+    const input = document.getElementById('adminPwdInput');
+    const err = document.getElementById('adminErr');
+    const close = () => modal.remove();
+
+    function submit() {
+      const pwd = (input.value || '').trim().toLowerCase();
+      if (pwd === 'admin' || pwd === 'admin123' || pwd === 'indira' || pwd === 'indira123') {
+        close();
+        if (gameState && gameState.timerInterval) clearInterval(gameState.timerInterval);
+        document.removeEventListener('keydown', handleMazeKey);
+        renderAdmin();
+      } else {
+        err.style.display = 'block';
+        input.value = '';
+        input.focus();
+      }
+    }
+
+    document.getElementById('adminSubmit').addEventListener('click', submit);
+    document.getElementById('adminCancel').addEventListener('click', close);
+    input.addEventListener('keypress', (e) => { if (e.key === 'Enter') submit(); });
+    modal.addEventListener('click', (e) => { if (e.target === modal) close(); });
+
+    // Focus input reliably
+    setTimeout(() => input.focus(), 50);
+  }
+
+  adminBtn.addEventListener('click', showAdminLogin);
+
+  renderLogin();
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,8 @@
+{
+  "name": "Gamethon - Bollywood Edition",
+  "description": "Interactive and responsive 5-stage Bollywood puzzle challenge featuring the Shammi Kapoor Puzzle, Ringtone Guesser, Dialogue Match, Guess the Actress, and Tic-Tac-Toe with an admin dashboard.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
