@@ -229,7 +229,7 @@
     await apiRequest('/players', { method: 'DELETE' });
     cachedPlayers = [];
   }
-  const TOTAL_TIME = 300;
+  const TOTAL_TIME = 180;
   const POINTS_PER_SECTION = 20;
   const WRONG_PENALTY = 4;
   const SECTION_IDS = ['spot', 'jumble', 'match', 'guess', 'eye'];
@@ -331,7 +331,7 @@
     el.textContent = formatCountdown(target - Date.now());
   }
 
-  // Session expiry: auto-logout after 5 minutes or when event ends
+  // Session expiry: auto-logout after 3 minutes or when event ends
   function isSessionExpired() {
     if (!isPlayBypassed() && eventStatus?.endAt && Date.now() >= eventStatus.endAt) return true;
     if (isEventClosedForPlayer()) return true;
@@ -371,7 +371,7 @@
         <h2 style="color:var(--danger);">${eventEnded ? 'Gamethon Closed' : 'Session Expired'}</h2>
         <p>${eventEnded
           ? `Today's Gamethon window (${eventStatus?.startLabel || '4:00 pm'} – ${eventStatus?.endLabel || '4:15 pm'}) has ended.`
-          : 'Your session has expired. Each Employee ID is valid for only 5 minutes after login.'}</p>
+          : 'Your session has expired. Each Employee ID is valid for only 3 minutes after login.'}</p>
         <p style="margin-top:8px;">${eventEnded ? 'Thank you for playing!' : 'Please log in again to play.'}</p>
         <div class="modal-actions" style="justify-content:center;margin-top:16px;">
           <button class="btn-primary" style="width:auto;margin-top:0;" id="expiredOk">Return to Login</button>
@@ -664,7 +664,7 @@
           <img class="app-logo app-logo--visual" src="${LOGO_URL}" alt="Bollywood Outdoor Cinema" />
           <div class="login-visual-badge">Indira IVF · Culture Club</div>
           <h2>Ready to Play?</h2>
-          <p>Five blockbuster challenges. Five minutes on the clock. Enter your details to join the arena.</p>
+          <p>Five blockbuster challenges. Three minutes on the clock. Enter your details to join the arena.</p>
         </div>
         <div class="login-form-panel">
           <div class="login-form-inner">
@@ -946,7 +946,7 @@
       renderLogin();
       return;
     }
-    const minsLeft = currentPlayer.sessionExpiresAt ? Math.max(0, Math.ceil((currentPlayer.sessionExpiresAt - Date.now()) / 60000)) : 5;
+    const minsLeft = currentPlayer.sessionExpiresAt ? Math.max(0, Math.ceil((currentPlayer.sessionExpiresAt - Date.now()) / 60000)) : 3;
     const sessionAlert = isPlayBypassed()
       ? (isTestPlayer(currentPlayer)
         ? `⏱ Test account — session: <strong>${minsLeft} min</strong>`
@@ -1036,7 +1036,7 @@
       jumble: { chosen: null, options: [] },
       match: { matched: [], selWord: null, selMean: null, wrong: null, words: [], meanings: [] },
       guess: { currentRound: 0, chosen: null, hintShown: false, options: shuffleArray(GUESS_ACTRESS_NAMES) },
-      eye: { selections: EYE_ROUNDS.map(() => null), openDropdown: null, submitted: false, lastVerifyFailed: false }
+      eye: { selections: EYE_ROUNDS.map(() => null), submitted: false, lastVerifyFailed: false }
     };
     
     // Shuffle Game 1 pieces until not fully solved
@@ -1097,10 +1097,6 @@
       return `<div class="${cls}"><span class="dot"></span>${step.icon} ${step.label}</div>`;
     }).join('');
 
-    const prevBtn = gameState.currentGame > 0
-      ? `<button class="btn-secondary arena-prev-btn" id="prevLevelBtn" type="button">← Previous</button>`
-      : '';
-
     return `
       <div class="arena-wrap">
         ${arenaDeco()}
@@ -1138,7 +1134,6 @@
                 <h2>${gameTitle}</h2>
                 <div class="sub">${subInfo || ''}</div>
               </div>
-              <div class="arena-head-actions">${prevBtn}</div>
             </div>
           </div>
           <div class="arena-main-body">
@@ -1147,48 +1142,6 @@
 
   function gameFooter() {
     return `</div></section></div>`;
-  }
-
-  function resetSectionProgress(sectionId) {
-    if (gameState.breakdown[sectionId] === 'solved') {
-      gameState.gamesCompleted = Math.max(0, gameState.gamesCompleted - 1);
-    }
-    gameState.breakdown[sectionId] = 'pending';
-    gameState.sectionScores[sectionId] = null;
-    gameState.wrongCounts[sectionId] = 0;
-  }
-
-  function reinitSectionState(sectionId) {
-    if (sectionId === 'spot') {
-      gameState.spot = { grid: [], selected: null };
-      let p_grid = [0, 1, 2, 3, 4, 5, 6, 7, 8];
-      do { p_grid.sort(() => Math.random() - 0.5); } while (p_grid.every((v, i) => v === i));
-      gameState.spot.grid = p_grid;
-    } else if (sectionId === 'jumble') {
-      gameState.jumble = { chosen: null, options: [...ANDHADHUN_POSTER.spellingOptions].sort(() => Math.random() - 0.5) };
-    } else if (sectionId === 'match') {
-      gameState.match = { matched: [], selWord: null, selMean: null, wrong: null, words: [], meanings: [] };
-      initMatchShuffle();
-    } else if (sectionId === 'guess') {
-      gameState.guess = { currentRound: 0, chosen: null, hintShown: false, options: shuffleArray(GUESS_ACTRESS_NAMES) };
-    } else if (sectionId === 'eye') {
-      gameState.eye = { selections: EYE_ROUNDS.map(() => null), openDropdown: null, submitted: false, lastVerifyFailed: false };
-    }
-  }
-
-  function goToPreviousLevel() {
-    if (!gameState || gameState.currentGame <= 0) return;
-    const curIdx = gameState.currentGame;
-    for (let i = curIdx; i < SECTION_IDS.length; i++) {
-      resetSectionProgress(SECTION_IDS[i]);
-    }
-    gameState.currentGame = curIdx - 1;
-    const prevId = SECTION_IDS[gameState.currentGame];
-    resetSectionProgress(prevId);
-    reinitSectionState(prevId);
-    gameState.feedback = null;
-    recalcTotalScore();
-    renderCurrentGame();
   }
 
   function advanceGame(result) {
@@ -1512,9 +1465,8 @@
 
   function renderEye() {
     const eyeState = gameState.eye;
-    
-    // Check if player has made selections for all cards to show Submit
     const allSelected = eyeState.selections.every(s => s !== null);
+    const locked = eyeState.submitted && !eyeState.lastVerifyFailed;
 
     app.innerHTML = gameHeader(5, 'Guess the Eye', 'Final challenge — match each gaze to a superstar') +
       (gameState.feedback ? `<div class="feedback ${gameState.feedback.type}">${gameState.feedback.text}</div>` : '') +
@@ -1522,7 +1474,6 @@
       <div class="eyes-grid eyes-grid-2">
         ${EYE_ROUNDS.map((round, idx) => {
           const selectedActor = eyeState.selections[idx];
-          const isDropdownOpen = eyeState.openDropdown === idx;
           let cardCls = 'eye-card';
           let badgeHtml = '';
           if (eyeState.submitted && eyeState.lastVerifyFailed) {
@@ -1541,56 +1492,40 @@
               <div class="eye-photo-frame eyes-only">
                 <img src="${round.img}" class="eye-crop" alt="Superstar eyes" referrerPolicy="no-referrer">
               </div>
-              <div class="eye-hint">${round.hint}</div>
-              <div class="eye-select-wrap">
-                <button class="eye-dropdown-btn" data-card-idx="${idx}" type="button">
-                  <span>${selectedActor || 'Select superstar'}</span>
-                  <span>${isDropdownOpen ? '▲' : '▼'}</span>
-                </button>
-                <div class="eye-dropdown-menu" style="display:${isDropdownOpen ? 'block' : 'none'};">
-                  ${EYE_CANDIDATES.map(candId => `
-                    <div class="eye-option-item ${selectedActor === candId ? 'selected' : ''}" data-card-idx="${idx}" data-val="${candId}">
-                      ${candId}
-                    </div>
-                  `).join('')}
-                </div>
+              <div class="eye-card-options-label">Select superstar</div>
+              <div class="options-grid cols-2 eye-options">
+                ${EYE_CANDIDATES.map(cand => {
+                  let btnCls = 'match-item';
+                  if (selectedActor === cand) btnCls += ' selected';
+                  if (locked) {
+                    if (selectedActor === cand) btnCls += ' matched';
+                    else btnCls += ' disabled';
+                  } else if (eyeState.submitted && eyeState.lastVerifyFailed) {
+                    if (selectedActor === cand && cand !== round.answer) btnCls += ' wrong';
+                    else if (cand !== selectedActor) btnCls += ' disabled';
+                  }
+                  return `<div class="${btnCls}" data-card-idx="${idx}" data-val="${cand}">${cand}</div>`;
+                }).join('')}
               </div>
+              <div class="eye-hint">${round.hint}</div>
             </div>
           `;
         }).join('')}
       </div>
       <div class="game-actions centered eye-verify-actions">
-        <button class="btn-success" id="submitEyeBtn" ${!allSelected ? 'disabled' : ''}>Verify Matches</button>
+        <button class="btn-success" id="submitEyeBtn" ${!allSelected || locked ? 'disabled' : ''}>Verify Matches</button>
       </div>` + gameFooter();
 
-    // Dropdown toggle listeners
-    document.querySelectorAll('.eye-dropdown-btn').forEach(btn => {
-      btn.addEventListener('click', (e) => {
-        e.stopPropagation();
-        const cardIdx = parseInt(btn.dataset.cardIdx);
-        // Toggle this dropdown, close others
-        if (eyeState.openDropdown === cardIdx) {
-          eyeState.openDropdown = null;
-        } else {
-          eyeState.openDropdown = cardIdx;
-        }
-        renderEye();
+    if (!locked && !(eyeState.submitted && eyeState.lastVerifyFailed)) {
+      document.querySelectorAll('.eye-options .match-item').forEach(item => {
+        item.addEventListener('click', () => {
+          const cardIdx = parseInt(item.dataset.cardIdx);
+          eyeState.selections[cardIdx] = item.dataset.val;
+          renderEye();
+        });
       });
-    });
+    }
 
-    // Option selection listeners
-    document.querySelectorAll('.eye-option-item').forEach(item => {
-      item.addEventListener('click', (e) => {
-        e.stopPropagation();
-        const cardIdx = parseInt(item.dataset.cardIdx);
-        const val = item.dataset.val;
-        eyeState.selections[cardIdx] = val;
-        eyeState.openDropdown = null;
-        renderEye();
-      });
-    });
-
-    // Verify submission button
     const submitBtn = document.getElementById('submitEyeBtn');
     if (submitBtn) {
       submitBtn.addEventListener('click', () => {
@@ -1619,7 +1554,6 @@
         }
       });
     }
-
   }
 
   // ======== END GAME ========
@@ -1989,10 +1923,6 @@
   }
 
   adminBtn.addEventListener('click', showAdminLogin);
-
-  app.addEventListener('click', (e) => {
-    if (e.target.closest('#prevLevelBtn')) goToPreviousLevel();
-  });
 
   renderLogin();
 })();

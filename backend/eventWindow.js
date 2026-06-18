@@ -1,5 +1,7 @@
 import './loadEnv.js';
 
+const SESSION_DURATION_MS = 3 * 60 * 1000;
+
 const DEFAULT_START = '2026-06-18T16:00:00+05:30';
 const DEFAULT_END = '2026-06-18T16:15:00+05:30';
 
@@ -55,7 +57,7 @@ export function getEventStatus(now = Date.now()) {
       endAt,
       now,
       startsInMs: 0,
-      endsInMs: 5 * 60 * 1000,
+      endsInMs: SESSION_DURATION_MS,
       startLabel: formatEventTime(startAt, timeZone),
       endLabel: formatEventTime(endAt, timeZone),
       dateLabel: formatEventDate(startAt, timeZone),
@@ -101,11 +103,11 @@ export function assertEventOpen(now = Date.now()) {
 
 export function sessionExpiresAtForLogin(now = Date.now(), { testUser = false } = {}) {
   if (testUser) {
-    return now + 5 * 60 * 1000;
+    return now + SESSION_DURATION_MS;
   }
   const status = getEventStatus(now);
   assertEventOpen(now);
-  const personalLimit = now + 5 * 60 * 1000;
+  const personalLimit = now + SESSION_DURATION_MS;
   if (status.bypass) return personalLimit;
   return Math.min(personalLimit, status.endAt);
 }
