@@ -5,6 +5,7 @@ import {
   getEventStatus,
   sessionExpiresAtForLogin,
 } from '../eventWindow.js';
+import { normalizeEmpId, validateAllowedEmployee } from '../seedAllowedEmployees.js';
 
 const router = Router();
 
@@ -84,6 +85,19 @@ router.post('/login', async (req, res) => {
     });
   }
 
+  let allowedEmployee;
+  try {
+    allowedEmployee = await validateAllowedEmployee(empId, empName);
+  } catch (err) {
+    return res.status(err.status || 403).json({
+      error: err.message,
+      code: err.code,
+    });
+  }
+
+  const canonicalEmpId = normalizeEmpId(allowedEmployee.emp_id);
+  const canonicalEmpName = allowedEmployee.emp_name.trim();
+
   const sessionId = Date.now();
   const sessionExpiresAt = sessionExpiresAtForLogin(sessionId);
   const breakdown = {
@@ -101,7 +115,7 @@ router.post('/login', async (req, res) => {
         breakdown, session_expires_at
       ) VALUES ($1, $2, $3, 'In Progress', 0, 0, $4, $5)
       RETURNING *`,
-      [empId.trim(), empName.trim(), sessionId, JSON.stringify(breakdown), sessionExpiresAt]
+      [canonicalEmpId, canonicalEmpName, sessionId, JSON.stringify(breakdown), sessionExpiresAt]
     );
     res.status(201).json({ player: rowToPlayer(result.rows[0]), event: eventStatus });
   } catch (err) {

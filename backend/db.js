@@ -1,5 +1,6 @@
 import pg from 'pg';
 import './loadEnv.js';
+import { createAllowedEmployeesTable, seedAllowedEmployees } from './seedAllowedEmployees.js';
 
 const { Pool } = pg;
 
@@ -45,6 +46,9 @@ export async function initDb() {
     CREATE INDEX IF NOT EXISTS idx_gamethon_players_started_at
     ON gamethon_players (started_at DESC)
   `);
+
+  await createAllowedEmployeesTable();
+  await seedAllowedEmployees();
 }
 
 export async function testConnection() {

@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Gamethon — Bollywood Arena</title>
+<title>Gamethon — Bollywood Outdoor Cinema</title>
 <link rel="stylesheet" href="/styles/gamezone.css">
 </head>
 <body>
@@ -11,14 +11,13 @@
 <div class="site-bg"></div>
 <header class="site-header">
   <div class="brand">
-    <img class="brand-logo-img" src="/src/assets/images/bollywood-popart-logo.png" alt="Bollywood Gamethon" />
-    <div>
-      <div class="brand-name">GAME<span class="accent">THON</span></div>
-      <div class="brand-tag">Bollywood Arena · Indira IVF</div>
+    <img class="brand-logo-img" src="/src/assets/images/bollywood-outdoor-cinema-logo.png" alt="Bollywood Outdoor Cinema" />
+    <div class="brand-copy">
+      <div class="brand-title">Indira IVF Gamethon</div>
+      <div class="brand-subtitle">Bollywood Outdoor Cinema</div>
     </div>
   </div>
   <div class="header-actions">
-    <div class="header-live">Now Showing</div>
     <button class="fs-btn" id="fsBtn" type="button" title="Toggle fullscreen">Fullscreen</button>
   </div>
 </header>
@@ -37,6 +36,7 @@
   const adminBtn = document.getElementById('adminBtn');
   const fsBtn = document.getElementById('fsBtn');
   const API_BASE = '/api';
+  const LOGO_URL = '/src/assets/images/bollywood-outdoor-cinema-logo.png';
   let cachedPlayers = [];
 
   function isFullscreen() {
@@ -368,21 +368,54 @@
     gameState.totalScore = 0;
   }
 
+  function formatScore(n) {
+    const v = Number(n) || 0;
+    return v > 0 ? `+${v}` : String(v);
+  }
+
   function sectionPointsRemaining(section) {
-    return Math.max(0, POINTS_PER_SECTION - (gameState.wrongCounts[section] || 0) * WRONG_PENALTY);
+    const raw = POINTS_PER_SECTION - (gameState.wrongCounts[section] || 0) * WRONG_PENALTY;
+    return Math.max(-POINTS_PER_SECTION, raw);
   }
 
   function applyWrongPenalty(section) {
     gameState.wrongCounts[section] = (gameState.wrongCounts[section] || 0) + 1;
+    syncLiveTotalScore();
     return sectionPointsRemaining(section);
   }
 
   function wrongAnswerFeedback(section) {
     const remaining = sectionPointsRemaining(section);
+    const wrongs = gameState.wrongCounts[section] || 0;
     return {
       type: 'error',
-      text: `Wrong answer! −${WRONG_PENALTY} pts. This section: ${remaining}/${POINTS_PER_SECTION} pts remaining.`,
+      text: `Wrong answer! −${WRONG_PENALTY} pts (${wrongs} wrong). Section score: ${formatScore(remaining)} / ${POINTS_PER_SECTION}.`,
     };
+  }
+
+  function syncLiveTotalScore() {
+    gameState.totalScore = getDisplayTotalScore();
+  }
+
+  function getBankedScore() {
+    if (!gameState?.sectionScores) return 0;
+    return SECTION_IDS.reduce((sum, id) => {
+      const s = gameState.sectionScores[id];
+      return sum + (s !== null && s !== undefined ? s : 0);
+    }, 0);
+  }
+
+  function getDisplayTotalScore() {
+    const banked = getBankedScore();
+    const cur = currentSectionId();
+    if (cur && gameState.sectionScores[cur] === null) {
+      return banked + sectionPointsRemaining(cur) - POINTS_PER_SECTION;
+    }
+    return banked;
+  }
+
+  function getLiveTotalScore() {
+    return getDisplayTotalScore();
   }
 
   function recalcTotalScore() {
@@ -452,25 +485,23 @@
     app.innerHTML = `
       <div class="login-screen">
         <div class="login-visual">
-          <div class="login-visual-bg" aria-hidden="true"></div>
+          <img class="app-logo app-logo--visual" src="${LOGO_URL}" alt="Bollywood Outdoor Cinema" />
           <div class="login-visual-badge">Indira IVF · Culture Club</div>
-          <img class="login-popart" src="/src/assets/images/bollywood-popart-logo.png" alt="Bollywood" />
-          <h2>BOLLYWOOD ARENA</h2>
-          <p>Five blockbuster challenges. Five minutes on the clock. Step onto the red carpet and prove your Bollywood IQ.</p>
-          <img class="login-dance" src="/src/assets/images/bollywood-dance.png" alt="" aria-hidden="true" />
+          <h2>Ready to Play?</h2>
+          <p>Five blockbuster challenges. Five minutes on the clock. Enter your details to join the arena.</p>
         </div>
         <div class="login-form-panel">
           <div class="login-form-inner">
-            <h3>PLAYER LOGIN</h3>
-            <p class="form-lead">Enter your details to join the arena</p>
+            <h3>Player Login</h3>
+            <p class="form-lead">Enter your employee ID and display name</p>
             <div class="event-gate ${locked ? 'locked' : 'live'}" id="eventGate">${eventGateMessage()}</div>
             <div class="form-group">
               <label for="empId">Employee ID</label>
-              <input type="text" id="empId" placeholder="e.g. EMP001" autocomplete="off" ${locked ? 'disabled' : ''} />
+              <input type="text" id="empId" placeholder="e.g. IIHL10230" autocomplete="off" ${locked ? 'disabled' : ''} />
             </div>
             <div class="form-group">
               <label for="empName">Display Name</label>
-              <input type="text" id="empName" placeholder="Your full name" autocomplete="off" ${locked ? 'disabled' : ''} />
+              <input type="text" id="empName" placeholder="Full name as per HR records" autocomplete="off" ${locked ? 'disabled' : ''} />
             </div>
             <div id="loginError" class="error-msg" style="display:none;"></div>
             <button class="btn-primary" id="loginBtn" ${locked ? 'disabled' : ''}>${locked ? (eventStatus?.phase === 'after' ? 'Gamethon Closed' : 'Opens Soon') : 'Enter Arena →'}</button>
@@ -534,24 +565,35 @@
     app.innerHTML = `
       <div class="start-screen">
         <div class="start-hero">
-          <img class="start-hero-logo" src="/src/assets/images/bollywood-popart-logo.png" alt="Bollywood" />
-          <div class="player-chip">Playing as <strong>${escapeHtml(currentPlayer.empName)}</strong> · ${escapeHtml(currentPlayer.empId)}</div>
-          <h1>READY TO PLAY?</h1>
-          <div class="session-alert">${sessionAlert}</div>
-        </div>
-        <div class="challenge-grid">
-          ${CHALLENGE_CARDS.map((c, i) => `
-            <div class="challenge-card">
-              <div class="num">CHALLENGE ${i + 1}</div>
-              <div class="icon">${c.icon}</div>
-              <div class="title">${c.title}</div>
-              <div class="desc">${c.desc}</div>
+          <div class="start-hero-layout">
+            <img class="app-logo app-logo--start" src="${LOGO_URL}" alt="Bollywood Outdoor Cinema" />
+            <div class="start-hero-main">
+              <span class="player-chip">Playing as <strong>${escapeHtml(currentPlayer.empName)}</strong> · ${escapeHtml(currentPlayer.empId)}</span>
+              <h1>Ready to Play?</h1>
+              <p class="start-meta">${sessionAlert}</p>
             </div>
-          `).join('')}
+          </div>
         </div>
-        <div class="start-footer">
-          <p class="start-rules">You have <strong>5 minutes total</strong>. Each challenge is worth <strong>20 points</strong> (100 max). Wrong answers cost <strong>−4 points</strong> from that section. Skip = 0 points for that section.</p>
-          <button class="start-btn" id="startBtn">▶ START GAME</button>
+        <div class="start-content">
+          <div class="start-section-head">
+            <h2>Five Challenges</h2>
+            <p>100 pts max · −${WRONG_PENALTY} per wrong answer</p>
+          </div>
+          <div class="challenge-grid">
+            ${CHALLENGE_CARDS.map((c, i) => `
+              <div class="challenge-card">
+                <div class="challenge-card-top">
+                  <span class="num">0${i + 1}</span>
+                  <span class="icon">${c.icon}</span>
+                </div>
+                <div class="title">${c.title}</div>
+              </div>
+            `).join('')}
+          </div>
+          <div class="start-actions">
+            <p class="start-rules"><strong>20 pts</strong> per challenge · <strong>−4</strong> wrong · skip = 0</p>
+            <button class="start-btn" id="startBtn">Start Game</button>
+          </div>
         </div>
       </div>
     `;
@@ -677,11 +719,11 @@
           </div>
           <div class="arena-stat-card">
             <div class="label">Score</div>
-            <div class="value"><strong>${gameState.totalScore}</strong> / 100</div>
+            <div class="value"><strong class="${getLiveTotalScore() < 0 ? 'score-negative' : ''}">${getLiveTotalScore()}</strong> / 100</div>
           </div>
           <div class="arena-stat-card">
             <div class="label">This Section</div>
-            <div class="value"><strong>${sectionPointsRemaining(currentSectionId())}</strong> / ${POINTS_PER_SECTION} pts</div>
+            <div class="value"><strong class="${sectionPointsRemaining(currentSectionId()) < 0 ? 'score-negative' : ''}">${formatScore(sectionPointsRemaining(currentSectionId()))}</strong> / ${POINTS_PER_SECTION} pts</div>
           </div>
           <div class="arena-stat-card">
             <div class="label">Progress</div>
@@ -771,7 +813,7 @@
           s.selected = null;
           
           if (s.grid.every((v, i) => v === i)) {
-            gameState.feedback = { type: 'success', text: '🎉 Brilliant! Portrait complete! +' + sectionPointsRemaining('spot') + ' pts.' };
+            gameState.feedback = { type: 'success', text: '🎉 Brilliant! Portrait complete! ' + formatScore(sectionPointsRemaining('spot')) + ' pts for this section.' };
             renderSpot();
             setTimeout(() => advanceGame('solved'), 1100);
             return;
@@ -821,7 +863,7 @@
         r.chosen = choice;
 
         if (choice === ANDHADHUN_POSTER.answer) {
-          gameState.feedback = { type: 'success', text: '🎉 Correct! +' + sectionPointsRemaining('jumble') + ' pts for this section.' };
+          gameState.feedback = { type: 'success', text: '🎉 Correct! ' + formatScore(sectionPointsRemaining('jumble')) + ' pts for this section.' };
           renderJumble();
           setTimeout(() => advanceGame('solved'), 1100);
         } else {
@@ -1126,7 +1168,7 @@
 
         if (matchesAll) {
           eyeState.lastVerifyFailed = false;
-          gameState.feedback = { type: 'success', text: '🎉 All matches correct! +' + sectionPointsRemaining('eye') + ' pts for this section.' };
+          gameState.feedback = { type: 'success', text: '🎉 All matches correct! ' + formatScore(sectionPointsRemaining('eye')) + ' pts for this section.' };
           renderEye();
           setTimeout(() => advanceGame('solved'), 1500);
         } else {
@@ -1217,9 +1259,11 @@
           ${SECTION_IDS.map(k => {
             const s = statusLabels[bd[k]] || statusLabels.pending;
             const pts = scores[k] !== null && scores[k] !== undefined ? scores[k] : 0;
+            const wrongs = bd.wrongCounts?.[k] || 0;
+            const wrongNote = wrongs ? ` · ${wrongs} wrong (−${wrongs * WRONG_PENALTY})` : '';
             return `<div class="breakdown-row">
               <span>${labels[k]}</span>
-              <span class="status ${s.cls}">${s.text} · ${pts}/${POINTS_PER_SECTION} pts</span>
+              <span class="status ${s.cls}">${s.text} · ${formatScore(pts)} / ${POINTS_PER_SECTION} pts${wrongNote}</span>
             </div>`;
           }).join('')}
         </div>

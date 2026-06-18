@@ -1,5 +1,6 @@
 import pg from 'pg';
 import '../loadEnv.js';
+import { createAllowedEmployeesTable, seedAllowedEmployees } from '../seedAllowedEmployees.js';
 
 const { Client } = pg;
 
@@ -67,6 +68,14 @@ async function initTables() {
 
   const count = await client.query('SELECT COUNT(*)::int AS count FROM gamethon_players');
   console.log(`Table gamethon_players ready (${count.rows[0].count} rows).`);
+
+  await createAllowedEmployeesTable();
+  const seedResult = await seedAllowedEmployees();
+  console.log(
+    seedResult.seeded
+      ? `Table gamethon_allowed_employees seeded (${seedResult.count} employees).`
+      : `Table gamethon_allowed_employees ready (${seedResult.count} employees).`
+  );
 
   await client.end();
 }
