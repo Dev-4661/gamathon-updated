@@ -99,7 +99,10 @@ export function assertEventOpen(now = Date.now()) {
   throw err;
 }
 
-export function sessionExpiresAtForLogin(now = Date.now()) {
+export function sessionExpiresAtForLogin(now = Date.now(), { testUser = false } = {}) {
+  if (testUser) {
+    return now + 5 * 60 * 1000;
+  }
   const status = getEventStatus(now);
   assertEventOpen(now);
   const personalLimit = now + 5 * 60 * 1000;

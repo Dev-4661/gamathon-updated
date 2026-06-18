@@ -6,6 +6,7 @@ import {
   sessionExpiresAtForLogin,
 } from '../eventWindow.js';
 import { normalizeEmpId, validateAllowedEmployee, lookupAllowedEmployee } from '../seedAllowedEmployees.js';
+import { isTestEmployee } from '../testUsers.js';
 
 const router = Router();
 
@@ -22,6 +23,29 @@ function rowToPlayer(row) {
     finishedAt: row.finished_at,
     sessionExpiresAt: row.session_expires_at ? Number(row.session_expires_at) : null,
   };
+}
+
+async function findFinishedPlayerSession(empId) {
+  const result = await query(
+    `SELECT * FROM gamethon_players
+     WHERE UPPER(emp_id) = $1 AND status != 'In Progress'
+     ORDER BY COALESCE(finished_at, updated_at) DESC
+     LIMIT 1`,
+    [normalizeEmpId(empId)]
+  );
+  return result.rows[0] || null;
+}
+
+function respondAlreadyPlayed(res, row) {
+  const player = rowToPlayer(row);
+  const score = player.breakdown?.totalScore ?? 0;
+  return res.status(403).json({
+    error: `You have already completed the Gamethon (score: ${score}/100). Each employee can play only once.`,
+    code: 'ALREADY_PLAYED',
+    score,
+    status: player.status,
+    finishedAt: player.finishedAt,
+  });
 }
 
 router.get('/event-status', (_req, res) => {
@@ -76,7 +100,7 @@ router.post('/login', async (req, res) => {
 
   let eventStatus;
   try {
-    eventStatus = assertEventOpen();
+    eventStatus = isTestEmployee(empId) ? getEventStatus() : assertEventOpen();
   } catch (err) {
     return res.status(err.status || 403).json({
       error: err.message,
@@ -97,9 +121,17 @@ router.post('/login', async (req, res) => {
 
   const canonicalEmpId = normalizeEmpId(allowedEmployee.emp_id);
   const canonicalEmpName = allowedEmployee.emp_name.trim();
+  const testUser = isTestEmployee(canonicalEmpId);
+
+  if (!testUser) {
+    const finishedSession = await findFinishedPlayerSession(canonicalEmpId);
+    if (finishedSession) {
+      return respondAlreadyPlayed(res, finishedSession);
+    }
+  }
 
   const sessionId = Date.now();
-  const sessionExpiresAt = sessionExpiresAtForLogin(sessionId);
+  const sessionExpiresAt = sessionExpiresAtForLogin(sessionId, { testUser });
   const breakdown = {
     spot: 'pending',
     jumble: 'pending',
@@ -117,7 +149,11 @@ router.post('/login', async (req, res) => {
       RETURNING *`,
       [canonicalEmpId, canonicalEmpName, sessionId, JSON.stringify(breakdown), sessionExpiresAt]
     );
-    res.status(201).json({ player: rowToPlayer(result.rows[0]), event: eventStatus });
+    res.status(201).json({
+      player: rowToPlayer(result.rows[0]),
+      event: eventStatus,
+      testUser,
+    });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -138,10 +174,21 @@ router.get('/lookup/:empId', async (req, res) => {
         code: 'INACTIVE',
       });
     }
+
+    const testUser = isTestEmployee(row.emp_id);
+
+    if (!testUser) {
+      const finishedSession = await findFinishedPlayerSession(row.emp_id);
+      if (finishedSession) {
+        return respondAlreadyPlayed(res, finishedSession);
+      }
+    }
+
     res.json({
       empId: row.emp_id,
       empName: row.emp_name.trim(),
       empStatus: row.emp_status,
+      testUser,
     });
   } catch (err) {
     res.status(500).json({ error: err.message });

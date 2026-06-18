@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Gamethon — Bollywood Outdoor Cinema</title>
+<title>Gamethon — Bollywood GameZone</title>
 <link rel="icon" type="image/png" href="/favicon.png">
 <link rel="stylesheet" href="/styles/gamezone.css">
 </head>
@@ -38,22 +38,112 @@
   const fsBtn = document.getElementById('fsBtn');
   const API_BASE = '/api';
   const LOGO_URL = '/images/bollywood-outdoor-cinema-logo.png';
+  const STICKER_BASE = '/images/stickers/';
+  const SECTION_DECO = {
+    login: [
+      { file: 'love-bollywood-style.png', pos: 'tl', size: 'lg' },
+      { file: 'bollywood-vibes.png', pos: 'br', size: 'md' },
+    ],
+    start: [
+      { file: 'dance-couple.png', pos: 'bl', size: 'md' },
+      { file: 'dancer-orange.png', pos: 'tr', size: 'sm' },
+    ],
+    results: [
+      { file: 'dancer-green.png', pos: 'tl', size: 'sm' },
+      { file: 'love-bollywood-style.png', pos: 'br', size: 'md' },
+    ],
+    admin: [
+      { file: 'clapperboard.png', pos: 'br', size: 'sm' },
+      { file: 'bollywood-vibes.png', pos: 'tl', size: 'sm' },
+    ],
+  };
+  const ARENA_DECO = [
+    [{ file: 'clapperboard.png', pos: 'br', size: 'sm' }, { file: 'dancer-blue.png', pos: 'tl', size: 'sm' }],
+    [{ file: 'dance-couple.png', pos: 'bl', size: 'md' }, { file: 'love-bollywood-style.png', pos: 'tr', size: 'xs' }],
+    [{ file: 'dancer-orange.png', pos: 'br', size: 'sm' }, { file: 'bollywood-vibes.png', pos: 'tl', size: 'sm' }],
+    [{ file: 'dancer-green.png', pos: 'bl', size: 'sm' }, { file: 'dancer-blue.png', pos: 'tr', size: 'sm' }],
+    [{ file: 'dancer-orange.png', pos: 'tr', size: 'sm' }, { file: 'clapperboard.png', pos: 'bl', size: 'xs' }],
+  ];
   let cachedPlayers = [];
+  let fullscreenLocked = false;
+  let reenterFullscreenTimer = null;
 
   function isFullscreen() {
     return !!(document.fullscreenElement || document.webkitFullscreenElement);
   }
 
-  async function toggleFullscreen() {
+  async function enterFullscreen() {
     try {
-      if (!isFullscreen()) {
-        const el = document.documentElement;
-        if (el.requestFullscreen) await el.requestFullscreen();
-        else if (el.webkitRequestFullscreen) await el.webkitRequestFullscreen();
-      } else {
-        if (document.exitFullscreen) await document.exitFullscreen();
-        else if (document.webkitExitFullscreen) await document.webkitExitFullscreen();
-      }
+      if (isFullscreen()) return;
+      const el = document.documentElement;
+      if (el.requestFullscreen) await el.requestFullscreen();
+      else if (el.webkitRequestFullscreen) await el.webkitRequestFullscreen();
+    } catch (e) { /* user denied or unsupported */ }
+  }
+
+  async function exitFullscreen() {
+    try {
+      if (!isFullscreen()) return;
+      if (document.exitFullscreen) await document.exitFullscreen();
+      else if (document.webkitExitFullscreen) await document.webkitExitFullscreen();
+    } catch (e) { /* ignore */ }
+  }
+
+  async function lockEscapeKey() {
+    if (!navigator.keyboard?.lock) return;
+    try {
+      await navigator.keyboard.lock(['Escape']);
+    } catch (e) { /* unsupported or denied */ }
+  }
+
+  function unlockEscapeKey() {
+    if (!navigator.keyboard?.unlock) return;
+    try {
+      navigator.keyboard.unlock();
+    } catch (e) { /* ignore */ }
+  }
+
+  function setFullscreenLock(locked) {
+    fullscreenLocked = locked;
+    document.body.classList.toggle('game-fullscreen-locked', locked);
+    if (!locked) unlockEscapeKey();
+    if (fsBtn) {
+      fsBtn.disabled = locked;
+      fsBtn.hidden = locked;
+      fsBtn.title = locked ? 'Fullscreen locked during gameplay' : 'Toggle fullscreen';
+    }
+  }
+
+  function handleFullscreenChange() {
+    updateFsBtn();
+    if (!fullscreenLocked || !gameState) return;
+    if (!isFullscreen()) {
+      clearTimeout(reenterFullscreenTimer);
+      enterFullscreen();
+      reenterFullscreenTimer = setTimeout(() => {
+        if (fullscreenLocked && gameState && !isFullscreen()) enterFullscreen();
+        if (fullscreenLocked && gameState) lockEscapeKey();
+      }, 50);
+    } else if (fullscreenLocked) {
+      lockEscapeKey();
+    }
+  }
+
+  function blockFullscreenExitKeys(e) {
+    if (!fullscreenLocked || !gameState) return;
+    if (e.key === 'Escape' || e.key === 'F11') {
+      e.preventDefault();
+      e.stopPropagation();
+      e.stopImmediatePropagation();
+      if (!isFullscreen()) enterFullscreen();
+    }
+  }
+
+  async function toggleFullscreen() {
+    if (fullscreenLocked) return;
+    try {
+      if (!isFullscreen()) await enterFullscreen();
+      else await exitFullscreen();
     } catch (e) { /* user denied or unsupported */ }
   }
 
@@ -64,9 +154,12 @@
 
   if (fsBtn) {
     fsBtn.addEventListener('click', toggleFullscreen);
-    document.addEventListener('fullscreenchange', updateFsBtn);
-    document.addEventListener('webkitfullscreenchange', updateFsBtn);
+    document.addEventListener('fullscreenchange', handleFullscreenChange);
+    document.addEventListener('webkitfullscreenchange', handleFullscreenChange);
   }
+
+  document.addEventListener('keydown', blockFullscreenExitKeys, true);
+  document.addEventListener('keyup', blockFullscreenExitKeys, true);
 
   async function apiRequest(path, options = {}) {
     const res = await fetch(`${API_BASE}${path}`, {
@@ -103,7 +196,7 @@
       !(p.empId === data.player.empId && p.sessionId === data.player.sessionId)
     )];
     if (data.event) eventStatus = data.event;
-    return data.player;
+    return { ...data.player, testUser: !!data.testUser };
   }
 
   async function lookupEmployee(empId) {
@@ -188,6 +281,18 @@
     return eventStatus && !eventStatus.isOpen && !isEventBypassed();
   }
 
+  function isTestPlayer(player) {
+    return player?.testUser === true;
+  }
+
+  function isPlayBypassed() {
+    return isEventBypassed() || isTestPlayer(currentPlayer);
+  }
+
+  function isEventClosedForPlayer() {
+    return isEventClosed() && !isTestPlayer(currentPlayer);
+  }
+
   function stopEventPoll() {
     if (eventPollInterval) {
       clearInterval(eventPollInterval);
@@ -228,8 +333,8 @@
 
   // Session expiry: auto-logout after 5 minutes or when event ends
   function isSessionExpired() {
-    if (!isEventBypassed() && eventStatus?.endAt && Date.now() >= eventStatus.endAt) return true;
-    if (isEventClosed()) return true;
+    if (!isPlayBypassed() && eventStatus?.endAt && Date.now() >= eventStatus.endAt) return true;
+    if (isEventClosedForPlayer()) return true;
     return currentPlayer && currentPlayer.sessionExpiresAt && Date.now() > currentPlayer.sessionExpiresAt;
   }
 
@@ -237,7 +342,7 @@
     if (sessionCheckInterval) clearInterval(sessionCheckInterval);
     sessionCheckInterval = setInterval(async () => {
       await refreshEventStatus();
-      if (!isEventBypassed() && gameState?.eventEndAt && Date.now() >= gameState.eventEndAt) {
+      if (!isPlayBypassed() && gameState?.eventEndAt && Date.now() >= gameState.eventEndAt) {
         gameState.timeRemaining = 0;
         clearInterval(gameState.timerInterval);
         endGame('Event Ended');
@@ -248,7 +353,8 @@
         sessionCheckInterval = null;
         if (gameState && gameState.timerInterval) clearInterval(gameState.timerInterval);
         document.removeEventListener('keydown', handleMazeKey);
-        showSessionExpiredModal(isEventClosed() && eventStatus?.phase === 'after');
+        setFullscreenLock(false);
+        showSessionExpiredModal(isEventClosedForPlayer() && eventStatus?.phase === 'after');
       }
     }, 1000);
   }
@@ -275,6 +381,7 @@
     document.body.appendChild(modal);
     document.getElementById('expiredOk').addEventListener('click', () => {
       modal.remove();
+      setFullscreenLock(false);
       // Save final state if in progress
       if (currentPlayer && currentPlayer.status === 'In Progress') {
         currentPlayer.status = 'Session Expired';
@@ -320,7 +427,20 @@
   const ANDHADHUN_POSTER = {
     image: '/images/andhadhun_poster.png',
     answer: 'Andhadhun',
-    spellingOptions: ['Andhadhun', 'Andhadhoon', 'Andhadhan', 'Andha Dhun', 'Andhadun', 'Andh Dhun']
+    spellingOptions: [
+      'Andhadhun',
+      'Andhadhoon',
+      'Andhadhan',
+      'Andha Dhun',
+      'Andhadun',
+      'Andh Dhun',
+      'Andhdhun',
+      'Andhadoon',
+      'Andhadhuun',
+      'Andha Dhoon',
+      'Andh-dhun',
+      'Anddhun',
+    ]
   };
 
   // ======== GAME 3: MATCH (Famous Movies & Dialogues) ========
@@ -354,25 +474,37 @@
   }
 
   // ======== GAME 4: GUESS THE ACTRESS ========
+  const GUESS_ACTRESS_NAMES = [
+    'Hema Malini',
+    'Rekha',
+    'Jaya Bachchan',
+    'Sharmila Tagore',
+    'Zeenat Aman',
+    'Parveen Babi',
+    'Rakhee',
+    'Mumtaz',
+    'Urmila Matondkar',
+    'Deepika Padukone',
+    'Alia Bhatt',
+  ];
+
   const GUESS_ROUNDS = [
     {
+      photo: '/images/alia_bhatt_child_1781675438578.jpg',
+      answer: 'Alia Bhatt',
+      hint: 'Bollywood superstar — from Student of the Year to Raazi and Gangubai Kathiawadi!',
+    },
+    {
       photo: '/images/urmila_matondkar_child.png',
-      options: ['Urmila Matondkar', 'Alia Bhatt', 'Tabu', 'Karisma Kapoor'],
       answer: 'Urmila Matondkar',
-      hint: 'She won hearts as a child artist in the 1983 classic "Masoom"!'
+      hint: 'Queen of versatility — child artist in Masoom, later star of Rangeela and Chandni Bar!',
     },
     {
       photo: '/images/deepika_child_1781675460296.jpg',
-      options: ['Deepika Padukone', 'Anushka Sharma', 'Priyanka Chopra', 'Katrina Kaif'],
       answer: 'Deepika Padukone',
-      hint: 'Daughter of badminton legend Prakash Padukone and star of Om Shanti Om!'
+      photoClass: 'guess-photo--no-label',
+      hint: 'Global superstar — from Om Shanti Om and Chennai Express to Padmaavat and Pathaan!',
     },
-    {
-      photo: '/images/kareena_child_1781675481034.jpg',
-      options: ['Kareena Kapoor', 'Karisma Kapoor', 'Sonam Kapoor', 'Kajol'],
-      answer: 'Kareena Kapoor',
-      hint: 'Affectionately known as "Bebo", granddaughter of Raj Kapoor!'
-    }
   ];
 
   // ======== API / DATA ========
@@ -386,6 +518,19 @@
 
   function escapeHtml(s) {
     return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  }
+
+  function sectionDeco(items) {
+    if (!items?.length) return '';
+    const imgs = items.map(s =>
+      `<img class="section-sticker section-sticker--${s.pos} section-sticker--${s.size}" src="${STICKER_BASE}${s.file}" alt="" loading="lazy" decoding="async" />`
+    ).join('');
+    return `<div class="section-deco" aria-hidden="true">${imgs}</div>`;
+  }
+
+  function arenaDeco() {
+    const idx = gameState?.currentGame ?? 0;
+    return sectionDeco(ARENA_DECO[idx] || ARENA_DECO[0]);
   }
   function initScoring() {
     gameState.wrongCounts = { spot: 0, jumble: 0, match: 0, guess: 0, eye: 0 };
@@ -412,14 +557,15 @@
   function wrongAnswerFeedback(section) {
     const remaining = sectionPointsRemaining(section);
     const wrongs = gameState.wrongCounts[section] || 0;
+    const total = getLiveTotalScore();
     return {
       type: 'error',
-      text: `Wrong answer! −${WRONG_PENALTY} pts (${wrongs} wrong). Section score: ${formatScore(remaining)} / ${POINTS_PER_SECTION}.`,
+      text: `Wrong answer! −${WRONG_PENALTY} pts (${wrongs} wrong). This section: ${formatScore(remaining)} / ${POINTS_PER_SECTION}. Total: ${total} / 100.`,
     };
   }
 
   function syncLiveTotalScore() {
-    gameState.totalScore = getDisplayTotalScore();
+    gameState.totalScore = getLiveTotalScore();
   }
 
   function getBankedScore() {
@@ -430,28 +576,32 @@
     }, 0);
   }
 
-  function getDisplayTotalScore() {
-    const banked = getBankedScore();
+  function getInProgressSectionContribution() {
     const cur = currentSectionId();
-    if (cur && gameState.sectionScores[cur] === null) {
-      return banked + sectionPointsRemaining(cur) - POINTS_PER_SECTION;
-    }
-    return banked;
+    if (!cur || gameState.sectionScores[cur] !== null) return 0;
+    const wrongs = gameState.wrongCounts[cur] || 0;
+    if (wrongs === 0) return 0;
+    const provisional = sectionPointsRemaining(cur);
+    const banked = getBankedScore();
+    // First section: show running section score. Later sections: add only the penalty delta.
+    if (banked === 0) return provisional;
+    return provisional - POINTS_PER_SECTION;
   }
 
   function getLiveTotalScore() {
-    return getDisplayTotalScore();
+    return getBankedScore() + getInProgressSectionContribution();
   }
 
   function recalcTotalScore() {
-    gameState.totalScore = SECTION_IDS.reduce((sum, id) => {
-      const s = gameState.sectionScores[id];
-      return sum + (s !== null && s !== undefined ? s : 0);
-    }, 0);
+    gameState.totalScore = getLiveTotalScore();
   }
 
   function finalizeSectionScore(section, result) {
-    gameState.sectionScores[section] = result === 'solved' ? sectionPointsRemaining(section) : 0;
+    if (result === 'solved' || result === 'submitted') {
+      gameState.sectionScores[section] = sectionPointsRemaining(section);
+    } else {
+      gameState.sectionScores[section] = 0;
+    }
     recalcTotalScore();
   }
 
@@ -509,6 +659,7 @@
     const locked = isEventClosed();
     app.innerHTML = `
       <div class="login-screen">
+        ${sectionDeco(SECTION_DECO.login)}
         <div class="login-visual">
           <img class="app-logo app-logo--visual" src="${LOGO_URL}" alt="Bollywood Outdoor Cinema" />
           <div class="login-visual-badge">Indira IVF · Culture Club</div>
@@ -518,17 +669,37 @@
         <div class="login-form-panel">
           <div class="login-form-inner">
             <h3>Player Login</h3>
-            <p class="form-lead">Enter your Employee ID — your name loads automatically</p>
+            <p class="form-lead">Enter your <strong>Employee Code</strong> below — we’ll fetch your name from HR automatically.</p>
+            <ol class="login-steps" aria-label="Login steps">
+              <li class="login-step login-step--active" id="stepId"><span>1</span> Enter code</li>
+              <li class="login-step" id="stepName"><span>2</span> Confirm name</li>
+              <li class="login-step" id="stepGo"><span>3</span> Enter arena</li>
+            </ol>
             <div class="event-gate ${locked ? 'locked' : 'live'}" id="eventGate">${eventGateMessage()}</div>
             <div class="form-group">
-              <label for="empId">Employee ID</label>
-              <input type="text" id="empId" placeholder="e.g. IIHL10230" autocomplete="username" ${locked ? 'disabled' : ''} />
+              <label for="empId">Employee Code</label>
+              <p class="field-hint">Use the code from your HR records (e.g. IIHL10230 or AZG261)</p>
+              <div class="input-field" id="empIdWrap">
+                <span class="input-icon" aria-hidden="true">
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M7 9h4M7 13h8"/></svg>
+                </span>
+                <input type="text" id="empId" placeholder="Type your employee code" autocomplete="username" autocapitalize="characters" spellcheck="false" />
+              </div>
             </div>
-            <div class="form-group">
-              <label for="empName">Employee Name</label>
-              <input type="text" id="empName" placeholder="Auto-filled after ID lookup" readonly tabindex="-1" />
+            <div class="form-group form-group--name">
+              <label for="empName">Your Name</label>
+              <p class="field-hint">Appears here after your code is verified — no typing needed</p>
+              <div class="input-field name-field input-field--empty" id="empNameWrap">
+                <span class="input-icon input-icon-slot" id="nameIcon" aria-hidden="true">
+                  <svg class="icon-person" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 3.6-7 8-7s8 3 8 7"/></svg>
+                  <svg class="icon-check" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg>
+                </span>
+                <input type="text" id="empName" placeholder="Waiting for your employee code…" readonly tabindex="-1" aria-readonly="true" aria-label="Your verified employee name" />
+              </div>
             </div>
-            <div id="loginHint" class="login-hint" style="display:none;"></div>
+            <div class="login-status-slot">
+              <div id="loginHint" class="login-status login-status--idle" role="status" aria-live="polite"></div>
+            </div>
             <div id="loginError" class="error-msg" style="display:none;"></div>
             <button class="btn-primary" id="loginBtn" ${locked ? 'disabled' : ''}>${locked ? (eventStatus?.phase === 'after' ? 'Gamethon Closed' : 'Opens Soon') : 'Enter Arena →'}</button>
           </div>
@@ -541,55 +712,181 @@
         else updateEventCountdown();
       });
     }
-    if (locked) return;
     const idInput = document.getElementById('empId');
     const nameInput = document.getElementById('empName');
+    const idWrap = document.getElementById('empIdWrap');
+    const nameWrap = document.getElementById('empNameWrap');
     const err = document.getElementById('loginError');
     const hint = document.getElementById('loginHint');
+    const loginBtn = document.getElementById('loginBtn');
+    const stepId = document.getElementById('stepId');
+    const stepName = document.getElementById('stepName');
+    const stepGo = document.getElementById('stepGo');
     let lookupTimer = null;
     let lookupRequest = 0;
+    let alreadyPlayed = false;
+    let loginTestUser = false;
+
+    function unlockTestLoginUI() {
+      loginTestUser = true;
+      if (idInput) idInput.disabled = false;
+      const gate = document.getElementById('eventGate');
+      if (gate) {
+        gate.className = 'event-gate live';
+        gate.innerHTML = 'Test account · play <strong>anytime</strong> with unlimited replays.';
+      }
+      setLoginEnabled(true);
+    }
+
+    function setLoginEnabled(enabled) {
+      const gateOpen = !locked || loginTestUser;
+      loginBtn.disabled = !enabled || !gateOpen;
+      loginBtn.textContent = !enabled
+        ? 'Already Played'
+        : (!gateOpen ? (eventStatus?.phase === 'after' ? 'Gamethon Closed' : 'Opens Soon') : 'Enter Arena →');
+    }
+
+    function setLoginStep(step) {
+      [stepId, stepName, stepGo].forEach(el => {
+        if (!el) return;
+        el.classList.remove('login-step--active', 'login-step--done');
+      });
+      if (step === 'id') stepId?.classList.add('login-step--active');
+      if (step === 'name') {
+        stepId?.classList.add('login-step--done');
+        stepName?.classList.add('login-step--active');
+      }
+      if (step === 'go') {
+        stepId?.classList.add('login-step--done');
+        stepName?.classList.add('login-step--done');
+        stepGo?.classList.add('login-step--active');
+      }
+    }
+
+    function setNameEmpty(empty) {
+      if (nameWrap) nameWrap.classList.toggle('input-field--empty', empty);
+    }
+
+    function setVerified(verified) {
+      if (nameWrap) {
+        nameWrap.classList.toggle('input-field--verified', verified);
+        nameWrap.classList.remove('input-field--pending');
+        setNameEmpty(!verified && !nameInput.value);
+      }
+      if (verified) setLoginStep('go');
+      else if (nameInput.value || nameWrap?.classList.contains('input-field--pending')) setLoginStep('name');
+      else setLoginStep('id');
+    }
+
+    function setNamePending(pending) {
+      if (nameWrap) nameWrap.classList.toggle('input-field--pending', pending);
+      if (pending) setLoginStep('name');
+    }
+
+    function setLookupLoading(loading) {
+      if (idWrap) idWrap.classList.toggle('input-field--loading', loading);
+    }
 
     function showHint(text, type) {
       if (!text) {
-        hint.style.display = 'none';
-        hint.textContent = '';
+        hint.innerHTML = '';
+        hint.className = 'login-status login-status--idle';
+        setVerified(false);
+        setNamePending(false);
+        setLookupLoading(false);
+        setNameEmpty(true);
+        setLoginStep('id');
         return;
       }
-      hint.textContent = text;
-      hint.className = 'login-hint ' + (type || '');
-      hint.style.display = 'block';
+      hint.className = 'login-status login-status--' + (type || '');
+      if (type === 'ok') {
+        setVerified(true);
+        setLookupLoading(false);
+        hint.innerHTML = `<span class="login-status-text">${escapeHtml(text)}</span>`;
+      } else if (type === 'loading') {
+        setVerified(false);
+        setLookupLoading(true);
+        hint.innerHTML = `
+          <span class="login-status-badge loading" aria-hidden="true"></span>
+          <span class="login-status-text">${escapeHtml(text)}</span>`;
+      } else if (type === 'error') {
+        setVerified(false);
+        setNamePending(false);
+        setLookupLoading(false);
+        hint.innerHTML = `
+          <span class="login-status-badge error" aria-hidden="true">!</span>
+          <span class="login-status-text">${escapeHtml(text)}</span>`;
+      } else {
+        hint.textContent = text;
+      }
     }
 
     async function fetchEmployeeName() {
       const empId = idInput.value.trim();
       if (!empId) {
         nameInput.value = '';
-        nameInput.placeholder = 'Auto-filled after ID lookup';
+        nameInput.placeholder = 'Waiting for your employee code…';
+        alreadyPlayed = false;
+        loginTestUser = false;
+        setLoginEnabled(true);
+        setVerified(false);
+        setNamePending(false);
+        setLookupLoading(false);
+        setNameEmpty(true);
         showHint('');
         return;
       }
 
       const requestId = ++lookupRequest;
-      nameInput.value = '';
-      nameInput.placeholder = 'Looking up...';
-      showHint('Checking Employee ID...', 'loading');
+      alreadyPlayed = false;
+      loginTestUser = false;
+      setLoginEnabled(true);
+      setVerified(false);
+      setNamePending(true);
+      setNameEmpty(!nameInput.value);
+      if (!nameInput.value) nameInput.placeholder = 'Looking up your name…';
+      showHint('Verifying your employee code…', 'loading');
 
       try {
         const data = await lookupEmployee(empId);
         if (requestId !== lookupRequest) return;
         nameInput.value = data.empName;
-        nameInput.placeholder = 'Auto-filled from HR records';
-        showHint('Name loaded. Click Enter Arena to continue.', 'ok');
+        nameInput.placeholder = '';
+        setNameEmpty(false);
+        setNamePending(false);
+        if (data.testUser) {
+          unlockTestLoginUI();
+          showHint('Welcome back! Test account — tap Enter Arena when ready.', 'ok');
+        } else {
+          showHint(`Welcome, ${data.empName.split(' ')[0]}! Tap Enter Arena to start playing.`, 'ok');
+        }
         err.style.display = 'none';
       } catch (e) {
         if (requestId !== lookupRequest) return;
         nameInput.value = '';
-        nameInput.placeholder = 'ID not found';
-        showHint(e.message || 'Could not find this Employee ID.', 'error');
+        nameInput.placeholder = e.code === 'ALREADY_PLAYED' ? 'Already completed' : 'Code not recognised';
+        setNameEmpty(true);
+        setNamePending(false);
+        setLoginStep('id');
+        if (e.code === 'ALREADY_PLAYED') {
+          alreadyPlayed = true;
+          setLoginEnabled(false);
+          showHint(e.message || 'You have already completed the Gamethon.', 'error');
+        } else {
+          showHint(e.message || 'Could not find this Employee ID.', 'error');
+        }
       }
     }
 
     idInput.addEventListener('input', () => {
+      const start = idInput.selectionStart;
+      const end = idInput.selectionEnd;
+      const upper = idInput.value.toUpperCase();
+      if (idInput.value !== upper) {
+        idInput.value = upper;
+        idInput.setSelectionRange(start, end);
+      }
+      setLoginStep('id');
       clearTimeout(lookupTimer);
       lookupTimer = setTimeout(fetchEmployeeName, 450);
     });
@@ -598,13 +895,18 @@
     function submit() {
       const empId = idInput.value.trim();
       const empName = nameInput.value.trim();
+      if (alreadyPlayed) {
+        err.textContent = 'You have already completed the Gamethon and cannot play again.';
+        err.style.display = 'block';
+        return;
+      }
       if (!empId) {
-        err.textContent = 'Please enter your Employee ID.';
+        err.textContent = 'Please enter your Employee Code.';
         err.style.display = 'block';
         return;
       }
       if (!empName) {
-        err.textContent = 'Wait for your name to load, or check that your Employee ID is registered.';
+        err.textContent = 'Please wait a moment while we fetch your name, or check your employee code.';
         err.style.display = 'block';
         fetchEmployeeName();
         return;
@@ -622,9 +924,13 @@
         if (e.event) eventStatus = e.event;
         err.textContent = e.message || 'Could not connect to server. Is the backend running?';
         err.style.display = 'block';
-        btn.disabled = false;
-        btn.textContent = isEventClosed() ? (eventStatus?.phase === 'after' ? 'Gamethon Closed' : 'Opens Soon') : 'Enter Arena →';
-        if (isEventClosed()) renderLogin();
+        if (e.code === 'ALREADY_PLAYED') {
+          alreadyPlayed = true;
+          setLoginEnabled(false);
+        } else {
+          setLoginEnabled(true);
+        }
+        if (isEventClosedForPlayer()) renderLogin();
       });
     }
     document.getElementById('loginBtn').addEventListener('click', submit);
@@ -636,16 +942,19 @@
   // ======== START SCREEN ========
   async function renderStart() {
     await refreshEventStatus();
-    if (isEventClosed()) {
+    if (isEventClosedForPlayer()) {
       renderLogin();
       return;
     }
     const minsLeft = currentPlayer.sessionExpiresAt ? Math.max(0, Math.ceil((currentPlayer.sessionExpiresAt - Date.now()) / 60000)) : 5;
-    const sessionAlert = isEventBypassed()
-      ? `⏱ Test mode (EVENT_BYPASS=true) — session: <strong>${minsLeft} min</strong>`
+    const sessionAlert = isPlayBypassed()
+      ? (isTestPlayer(currentPlayer)
+        ? `⏱ Test account — session: <strong>${minsLeft} min</strong>`
+        : `⏱ Test mode (EVENT_BYPASS=true) — session: <strong>${minsLeft} min</strong>`)
       : `⏱ Gamethon closes at <strong>${eventStatus?.endLabel || '4:15 pm'}</strong> · <strong id="eventCountdown">${formatCountdown(eventStatus?.endsInMs || 0)}</strong> left · session: <strong>${minsLeft} min</strong>`;
     app.innerHTML = `
       <div class="start-screen">
+        ${sectionDeco(SECTION_DECO.start)}
         <div class="start-hero">
           <div class="start-hero-layout">
             <img class="app-logo app-logo--start" src="${LOGO_URL}" alt="Bollywood Outdoor Cinema" />
@@ -659,7 +968,7 @@
         <div class="start-content">
           <div class="start-section-head">
             <h2>Five Challenges</h2>
-            <p>100 pts max · −${WRONG_PENALTY} per wrong answer</p>
+            <p class="start-score-highlight"><span class="start-score-highlight__icon" aria-hidden="true">🏆</span> <strong>100 pts max</strong> · <strong>−${WRONG_PENALTY} per wrong answer</strong></p>
           </div>
           <div class="challenge-grid">
             ${CHALLENGE_CARDS.map((c, i) => `
@@ -673,7 +982,7 @@
             `).join('')}
           </div>
           <div class="start-actions">
-            <p class="start-rules"><strong>20 pts</strong> per challenge · <strong>−4</strong> wrong · skip = 0</p>
+            <p class="start-rules"><strong>20 pts</strong> per challenge · <strong>−4</strong> per wrong answer</p>
             <button class="start-btn" id="startBtn">Start Game</button>
           </div>
         </div>
@@ -681,8 +990,8 @@
     `;
     document.getElementById('startBtn').addEventListener('click', startGame);
     startEventPoll((prevPhase) => {
-      if (eventStatus?.phase !== prevPhase || isEventClosed()) {
-        if (isEventClosed()) renderLogin();
+      if (eventStatus?.phase !== prevPhase || isEventClosedForPlayer()) {
+        if (isEventClosedForPlayer()) renderLogin();
         else renderStart();
       } else {
         updateEventCountdown();
@@ -691,18 +1000,18 @@
   }
 
   // ======== GAME ORCHESTRATOR ========
-  function startGame() {
-    if (isEventClosed()) {
+  async function startGame() {
+    if (isEventClosedForPlayer()) {
       renderLogin();
       return;
     }
-    const eventSecondsLeft = (!isEventBypassed() && eventStatus)
+    const eventSecondsLeft = (!isPlayBypassed() && eventStatus)
       ? Math.max(0, Math.floor((eventStatus.endAt - Date.now()) / 1000))
       : TOTAL_TIME;
     const sessionSecondsLeft = currentPlayer?.sessionExpiresAt
       ? Math.max(0, Math.floor((currentPlayer.sessionExpiresAt - Date.now()) / 1000))
       : TOTAL_TIME;
-    const allowedTime = isEventBypassed()
+    const allowedTime = isPlayBypassed()
       ? Math.min(TOTAL_TIME, sessionSecondsLeft)
       : Math.min(TOTAL_TIME, eventSecondsLeft, sessionSecondsLeft);
     if (allowedTime <= 0) {
@@ -710,11 +1019,13 @@
       return;
     }
     stopEventPoll();
-    if (!isFullscreen()) toggleFullscreen();
+    setFullscreenLock(true);
+    await enterFullscreen();
+    await lockEscapeKey();
     gameState = {
       currentGame: 0,
       timeRemaining: allowedTime,
-      eventEndAt: isEventBypassed() ? null : (eventStatus?.endAt || null),
+      eventEndAt: isPlayBypassed() ? null : (eventStatus?.endAt || null),
       timerInterval: null,
       startTime: Date.now(),
       gamesCompleted: 0,
@@ -724,7 +1035,7 @@
       spot: { grid: [], selected: null },
       jumble: { chosen: null, options: [] },
       match: { matched: [], selWord: null, selMean: null, wrong: null, words: [], meanings: [] },
-      guess: { currentRound: 0, chosen: null, hintShown: false },
+      guess: { currentRound: 0, chosen: null, hintShown: false, options: shuffleArray(GUESS_ACTRESS_NAMES) },
       eye: { selections: EYE_ROUNDS.map(() => null), openDropdown: null, submitted: false, lastVerifyFailed: false }
     };
     
@@ -747,7 +1058,7 @@
   }
 
   function tickTimer() {
-    if (!isEventBypassed() && gameState.eventEndAt && Date.now() >= gameState.eventEndAt) {
+    if (!isPlayBypassed() && gameState.eventEndAt && Date.now() >= gameState.eventEndAt) {
       gameState.timeRemaining = 0;
       clearInterval(gameState.timerInterval);
       endGame('Event Ended');
@@ -786,8 +1097,13 @@
       return `<div class="${cls}"><span class="dot"></span>${step.icon} ${step.label}</div>`;
     }).join('');
 
+    const prevBtn = gameState.currentGame > 0
+      ? `<button class="btn-secondary arena-prev-btn" id="prevLevelBtn" type="button">← Previous</button>`
+      : '';
+
     return `
       <div class="arena-wrap">
+        ${arenaDeco()}
         <aside class="arena-sidebar">
           <div class="arena-timer-card">
             <div class="arena-timer-label">Time Left</div>
@@ -803,7 +1119,7 @@
           </div>
           <div class="arena-stat-card">
             <div class="label">This Section</div>
-            <div class="value"><strong class="${sectionPointsRemaining(currentSectionId()) < 0 ? 'score-negative' : ''}">${formatScore(sectionPointsRemaining(currentSectionId()))}</strong> / ${POINTS_PER_SECTION} pts</div>
+            <div class="value"><strong class="${sectionPointsRemaining(currentSectionId()) < 0 ? 'score-negative' : ''}">${sectionPointsRemaining(currentSectionId())}</strong> / ${POINTS_PER_SECTION} pts</div>
           </div>
           <div class="arena-stat-card">
             <div class="label">Progress</div>
@@ -816,9 +1132,14 @@
         </aside>
         <section class="arena-main">
           <div class="arena-main-head">
-            <div class="level-tag">Level ${gameNum} of 5</div>
-            <h2>${gameTitle}</h2>
-            <div class="sub">${subInfo || ''}</div>
+            <div class="arena-main-head-row">
+              <div class="arena-main-head-copy">
+                <div class="level-tag">Level ${gameNum} of 5</div>
+                <h2>${gameTitle}</h2>
+                <div class="sub">${subInfo || ''}</div>
+              </div>
+              <div class="arena-head-actions">${prevBtn}</div>
+            </div>
           </div>
           <div class="arena-main-body">
     `;
@@ -826,6 +1147,48 @@
 
   function gameFooter() {
     return `</div></section></div>`;
+  }
+
+  function resetSectionProgress(sectionId) {
+    if (gameState.breakdown[sectionId] === 'solved') {
+      gameState.gamesCompleted = Math.max(0, gameState.gamesCompleted - 1);
+    }
+    gameState.breakdown[sectionId] = 'pending';
+    gameState.sectionScores[sectionId] = null;
+    gameState.wrongCounts[sectionId] = 0;
+  }
+
+  function reinitSectionState(sectionId) {
+    if (sectionId === 'spot') {
+      gameState.spot = { grid: [], selected: null };
+      let p_grid = [0, 1, 2, 3, 4, 5, 6, 7, 8];
+      do { p_grid.sort(() => Math.random() - 0.5); } while (p_grid.every((v, i) => v === i));
+      gameState.spot.grid = p_grid;
+    } else if (sectionId === 'jumble') {
+      gameState.jumble = { chosen: null, options: [...ANDHADHUN_POSTER.spellingOptions].sort(() => Math.random() - 0.5) };
+    } else if (sectionId === 'match') {
+      gameState.match = { matched: [], selWord: null, selMean: null, wrong: null, words: [], meanings: [] };
+      initMatchShuffle();
+    } else if (sectionId === 'guess') {
+      gameState.guess = { currentRound: 0, chosen: null, hintShown: false, options: shuffleArray(GUESS_ACTRESS_NAMES) };
+    } else if (sectionId === 'eye') {
+      gameState.eye = { selections: EYE_ROUNDS.map(() => null), openDropdown: null, submitted: false, lastVerifyFailed: false };
+    }
+  }
+
+  function goToPreviousLevel() {
+    if (!gameState || gameState.currentGame <= 0) return;
+    const curIdx = gameState.currentGame;
+    for (let i = curIdx; i < SECTION_IDS.length; i++) {
+      resetSectionProgress(SECTION_IDS[i]);
+    }
+    gameState.currentGame = curIdx - 1;
+    const prevId = SECTION_IDS[gameState.currentGame];
+    resetSectionProgress(prevId);
+    reinitSectionState(prevId);
+    gameState.feedback = null;
+    recalcTotalScore();
+    renderCurrentGame();
   }
 
   function advanceGame(result) {
@@ -881,9 +1244,6 @@
           </div>
           <div class="puzzle-preview-caption">Golden Era Legend</div>
         </div>
-      </div>
-      <div class="game-actions">
-        <button class="btn-warn" id="skipBtn">Skip Challenge</button>
       </div>` + gameFooter();
 
     document.querySelectorAll('.puzzle-tile').forEach(tile => {
@@ -910,7 +1270,6 @@
       });
     });
 
-    document.getElementById('skipBtn').addEventListener('click', () => advanceGame('skipped'));
   }
 
   // ======== GAME 2: GUESS THE MOVIE (Poster) ========
@@ -927,7 +1286,7 @@
           <img src="${ANDHADHUN_POSTER.image}" alt="Movie poster clue">
         </div>
         <div class="game-panel-title">Select the correct spelling</div>
-        <div class="options-grid">
+        <div class="options-grid cols-3">
           ${r.options.map(opt => {
             let btnCls = 'match-item';
             if (finished) {
@@ -938,9 +1297,6 @@
             return `<div class="${btnCls}" data-opt="${opt}">${opt}</div>`;
           }).join('')}
         </div>
-      </div>
-      <div class="game-actions">
-        <button class="btn-warn" id="skipBtn">Skip Challenge</button>
       </div>` + gameFooter();
 
     document.querySelectorAll('[data-opt]').forEach(item => {
@@ -966,7 +1322,6 @@
       });
     });
 
-    document.getElementById('skipBtn').addEventListener('click', () => advanceGame('skipped'));
   }
 
   // ======== DIALOGUE MATCH ========
@@ -995,9 +1350,6 @@
             return `<div class="match-item ${isMatched ? 'matched' : ''} ${isSel ? 'selected' : ''} ${isWrong ? 'wrong' : ''}" data-m="${x.id}">${x.text}</div>`;
           }).join('')}
         </div>
-      </div>
-      <div class="game-actions">
-        <button class="btn-warn" id="skipBtn">Skip Challenge</button>
       </div>` + gameFooter();
 
     document.querySelectorAll('[data-w]').forEach(el => {
@@ -1016,7 +1368,6 @@
         checkMatch();
       });
     });
-    document.getElementById('skipBtn').addEventListener('click', () => advanceGame('skipped'));
   }
 
   function checkMatch() {
@@ -1026,7 +1377,7 @@
         m.matched.push(m.selWord);
         m.selWord = null; m.selMean = null; m.wrong = null;
         if (m.matched.length === MATCH_PAIRS.length) {
-          gameState.feedback = { type: 'success', text: '🎉 All matched! Moving to next game...' };
+          gameState.feedback = { type: 'success', text: '🎉 All matched! ' + formatScore(sectionPointsRemaining('match')) + ' pts for this section.' };
           renderMatch();
           setTimeout(() => advanceGame('solved'), 900);
           return;
@@ -1059,7 +1410,7 @@
       (gameState.feedback ? `<div class="feedback ${gameState.feedback.type}">${gameState.feedback.text}</div>` : '') +
       `<p class="instruction">Examine the childhood photo and identify the Bollywood superstar.</p>
       <div class="game-panel">
-        <div class="media-frame portrait">
+        <div class="media-frame portrait${round.photoClass ? ' ' + round.photoClass : ''}">
           <img src="${round.photo}" alt="Childhood photo" referrerPolicy="no-referrer">
         </div>
         <div id="hintBox">
@@ -1069,8 +1420,8 @@
           }
         </div>
         <div class="game-panel-title">Who is she?</div>
-        <div class="options-grid cols-2">
-          ${round.options.map(opt => {
+        <div class="options-grid cols-3">
+          ${gs.options.map(opt => {
             let btnClass = 'match-item';
             if (isFinished) {
               if (isCorrect && opt === gs.chosen) btnClass += ' matched';
@@ -1080,9 +1431,6 @@
             return `<div class="${btnClass}" data-opt="${opt}">${opt}</div>`;
           }).join('')}
         </div>
-      </div>
-      <div class="game-actions">
-        <button class="btn-warn" id="skipBtn">Skip Challenge</button>
       </div>` + gameFooter();
 
     if (!isFinished) {
@@ -1099,6 +1447,7 @@
                 gs.currentRound++;
                 gs.chosen = null;
                 gs.hintShown = false;
+                gs.options = shuffleArray(GUESS_ACTRESS_NAMES);
                 renderGuess();
               } else {
                 advanceGame('solved');
@@ -1126,7 +1475,6 @@
       }
     }
 
-    document.getElementById('skipBtn').addEventListener('click', () => advanceGame('skipped'));
   }
 
   function handleMazeKey() {
@@ -1211,8 +1559,7 @@
           `;
         }).join('')}
       </div>
-      <div class="game-actions centered">
-        <button class="btn-warn" id="skipBtn">Skip Challenge</button>
+      <div class="game-actions centered eye-verify-actions">
         <button class="btn-success" id="submitEyeBtn" ${!allSelected ? 'disabled' : ''}>Verify Matches</button>
       </div>` + gameFooter();
 
@@ -1273,11 +1620,11 @@
       });
     }
 
-    document.getElementById('skipBtn').addEventListener('click', () => advanceGame('skipped'));
   }
 
   // ======== END GAME ========
   function endGame(status) {
+    setFullscreenLock(false);
     clearInterval(gameState.timerInterval);
     document.removeEventListener('keydown', handleMazeKey);
     const timeTaken = TOTAL_TIME - gameState.timeRemaining;
@@ -1286,7 +1633,8 @@
       const g = SECTION_IDS[gameState.currentGame];
       if (gameState.breakdown[g] === 'pending') {
         gameState.breakdown[g] = 'missed';
-        gameState.sectionScores[g] = 0;
+        const wrongs = gameState.wrongCounts[g] || 0;
+        gameState.sectionScores[g] = wrongs > 0 ? sectionPointsRemaining(g) : 0;
       }
     }
     SECTION_IDS.forEach(id => {
@@ -1311,9 +1659,12 @@
     const bd = currentPlayer.breakdown || gameState.breakdown;
     const scores = bd.scores || gameState.sectionScores || {};
     const totalScore = bd.totalScore ?? gameState.totalScore ?? 0;
+    const scorePct = Math.min(100, Math.max(0, totalScore));
     const labels = { spot: 'Shammi Kapoor Puzzle', jumble: 'Guess the Movie', match: 'Dialogue Match', guess: 'Guess the Actress', eye: 'Guess the Eye' };
+    const icons = { spot: '🧩', jumble: '🎬', match: '💬', guess: '⭐', eye: '👁' };
     const statusLabels = {
       solved: { cls: 'solved', text: 'Solved' },
+      submitted: { cls: 'skipped', text: 'Submitted' },
       skipped: { cls: 'skipped', text: 'Skipped' },
       pending: { cls: 'missed', text: 'Not reached' },
       missed: { cls: 'missed', text: 'Not reached' },
@@ -1322,38 +1673,80 @@
     calculateRank(currentPlayer).then(rankInfo => {
     app.innerHTML = `
       <div class="results-screen">
-        <h1>${isTimeout ? "TIME'S UP" : 'ALL DONE'}</h1>
-        <div class="result-badge ${isTimeout ? 'timeout' : 'completed'}">${status}</div>
-        <p class="subtitle">Great effort, <strong style="color:var(--accent-3);">${escapeHtml(currentPlayer.empName)}</strong>!</p>
-        <div class="result-stats">
-          <div class="result-stat">
-            <div class="label">Total Score</div>
-            <div class="value">${totalScore}<span style="font-size:20px;color:var(--text-muted);">/100</span></div>
+        ${sectionDeco(SECTION_DECO.results)}
+        <div class="results-card ${isTimeout ? 'results-card--timeout' : 'results-card--done'}">
+          <div class="results-hero">
+            <div class="results-hero-icon" aria-hidden="true">${isTimeout ? '⏱' : '🏆'}</div>
+            <h1>${isTimeout ? "TIME'S UP" : 'ALL DONE'}</h1>
+            <div class="result-badge ${isTimeout ? 'timeout' : 'completed'}">${status}</div>
+            <p class="results-greeting">Great effort, <strong>${escapeHtml(currentPlayer.empName)}</strong>!</p>
           </div>
-          <div class="result-stat">
-            <div class="label">Games Solved</div>
-            <div class="value">${gameState.gamesCompleted}<span style="font-size:20px;color:var(--text-muted);">/5</span></div>
+
+          <div class="results-score-block">
+            <div class="results-score-ring" style="--score-pct: ${scorePct}">
+              <div class="results-score-ring-inner">
+                <span class="results-score-num">${totalScore}</span>
+                <span class="results-score-of">/ 100</span>
+              </div>
+            </div>
+            <div class="result-stats">
+              <div class="result-stat">
+                <span class="result-stat-icon" aria-hidden="true">🎯</span>
+                <div class="result-stat-body">
+                  <div class="label">Total Score</div>
+                  <div class="value">${totalScore}<span class="value-denom">/100</span></div>
+                </div>
+              </div>
+              <div class="result-stat">
+                <span class="result-stat-icon" aria-hidden="true">✅</span>
+                <div class="result-stat-body">
+                  <div class="label">Games Solved</div>
+                  <div class="value">${gameState.gamesCompleted}<span class="value-denom">/5</span></div>
+                </div>
+              </div>
+              <div class="result-stat">
+                <span class="result-stat-icon" aria-hidden="true">⏱</span>
+                <div class="result-stat-body">
+                  <div class="label">Time Taken</div>
+                  <div class="value value-time">${formatTime(timeTaken)}</div>
+                </div>
+              </div>
+            </div>
           </div>
-          <div class="result-stat">
-            <div class="label">Time Taken</div>
-            <div class="value">${formatTime(timeTaken)}</div>
+
+          <div class="game-breakdown">
+            <div class="game-breakdown-head">
+              <h3>Challenge Breakdown</h3>
+              <span class="game-breakdown-meta">${gameState.gamesCompleted} of 5 cleared</span>
+            </div>
+            <div class="breakdown-list">
+              ${SECTION_IDS.map(k => {
+                const s = statusLabels[bd[k]] || statusLabels.pending;
+                const pts = scores[k] !== null && scores[k] !== undefined ? scores[k] : 0;
+                const wrongs = bd.wrongCounts?.[k] || 0;
+                const barPct = Math.round((pts / POINTS_PER_SECTION) * 100);
+                const wrongNote = wrongs ? `<span class="breakdown-wrong">${wrongs} wrong (−${wrongs * WRONG_PENALTY})</span>` : '';
+                return `<div class="breakdown-item breakdown-item--${s.cls}">
+                  <div class="breakdown-item-main">
+                    <span class="breakdown-icon" aria-hidden="true">${icons[k]}</span>
+                    <div class="breakdown-copy">
+                      <div class="breakdown-name">${labels[k]}</div>
+                      <div class="breakdown-bar" role="presentation"><span style="width:${barPct}%"></span></div>
+                    </div>
+                  </div>
+                  <div class="breakdown-item-meta">
+                    <span class="breakdown-badge ${s.cls}">${s.text}</span>
+                    <span class="breakdown-pts">${formatScore(pts)} / ${POINTS_PER_SECTION} pts</span>
+                    ${wrongNote}
+                  </div>
+                </div>`;
+              }).join('')}
+            </div>
           </div>
-        </div>
-        <div class="game-breakdown">
-          <h3>Challenge Breakdown</h3>
-          ${SECTION_IDS.map(k => {
-            const s = statusLabels[bd[k]] || statusLabels.pending;
-            const pts = scores[k] !== null && scores[k] !== undefined ? scores[k] : 0;
-            const wrongs = bd.wrongCounts?.[k] || 0;
-            const wrongNote = wrongs ? ` · ${wrongs} wrong (−${wrongs * WRONG_PENALTY})` : '';
-            return `<div class="breakdown-row">
-              <span>${labels[k]}</span>
-              <span class="status ${s.cls}">${s.text} · ${formatScore(pts)} / ${POINTS_PER_SECTION} pts${wrongNote}</span>
-            </div>`;
-          }).join('')}
-        </div>
-        <div class="action-row">
-          <button class="btn-secondary" id="logout">Logout</button>
+
+          <div class="action-row">
+            <button class="btn-primary results-logout" id="logout">Back to Login</button>
+          </div>
         </div>
       </div>
     `;
@@ -1419,6 +1812,7 @@
   function renderAdmin() {
     app.innerHTML = `
       <div class="admin-screen">
+        ${sectionDeco(SECTION_DECO.admin)}
         <h1>CONTROL ROOM</h1>
         <p class="subtitle">Player stats & leaderboard</p>
         <div class="admin-tabs">
@@ -1572,8 +1966,8 @@
     const close = () => modal.remove();
 
     function submit() {
-      const pwd = (input.value || '').trim().toLowerCase();
-      if (pwd === 'admin' || pwd === 'admin123' || pwd === 'indira' || pwd === 'indira123') {
+      const pwd = (input.value || '').trim();
+      if (pwd === 'Admin@1064') {
         close();
         if (gameState && gameState.timerInterval) clearInterval(gameState.timerInterval);
         document.removeEventListener('keydown', handleMazeKey);
@@ -1595,6 +1989,10 @@
   }
 
   adminBtn.addEventListener('click', showAdminLogin);
+
+  app.addEventListener('click', (e) => {
+    if (e.target.closest('#prevLevelBtn')) goToPreviousLevel();
+  });
 
   renderLogin();
 })();
